@@ -4,6 +4,7 @@ import { useSettings } from "../contexts/SettingsContext";
 import { selectAIConfig } from "../services/aiConfigUtils";
 import { calculateYellowHairBehaviorStage, decideTodayYellowHair, generateYellowHair, shouldTriggerYellowHair, shouldYellowHairAppearToday } from "../services/arcLightService";
 import { generateCharacterResponse } from "../services/characterService";
+import { appendDebugLog } from "../services/debugLogService";
 import { generateTweetForPhoneApp } from "../services/phoneContentService";
 import {
   BackpackItem,
@@ -507,6 +508,41 @@ export const useDialogue = ({
         apiKeyLength: selectedAIConfig.apiKey?.length || 0,
       });
 
+      if (settings.debugLoggingEnabled) {
+        appendDebugLog({
+          scope: "useDialogue",
+          event: "request-context",
+          data: {
+            actionText,
+            isSystemAction,
+            history,
+            enhancedPromptText,
+            userLocation,
+            isRemoteWeChat,
+            selectedAI: {
+              apiBase: selectedAIConfig.apiBase,
+              model: selectedAIConfig.model,
+              hasApiKey: !!selectedAIConfig.apiKey,
+            },
+            bodyStatus: statusWithContext,
+            memoryData: {
+              todaySummary,
+              calendarEvents: calendarEvents.map((e) => ({
+                time: e.time,
+                title: e.title,
+                description: e.description,
+              })),
+              gameTime,
+              presetContent: settings.presetContent,
+              writingStyle: settings.writingStyle,
+              perspective: settings.perspective,
+              nsfwStyle: settings.nsfwStyle,
+              jailbreakPrompt: settings.jailbreakPrompt,
+            },
+          },
+        });
+      }
+
       const response = await generateCharacterResponse(
         history,
         enhancedPromptText, // 使用增强后的promptText（包含黄毛信息）
@@ -614,6 +650,19 @@ export const useDialogue = ({
         } else if (!replyText.startsWith('(微信)')) {
           replyText = `(微信) ${replyText}`;
         }
+      }
+
+      if (settings.debugLoggingEnabled) {
+        appendDebugLog({
+          scope: "useDialogue",
+          event: "rendered-reply",
+          data: {
+            replyText,
+            isRemoteWeChat,
+            generatedStatus: response.status,
+            generatedTweet: response.generatedTweet ?? null,
+          },
+        });
       }
       
       setMessages((prev) => [
@@ -871,6 +920,18 @@ export const useDialogue = ({
       console.error("AI调用错误:", error);
       
       // 创建重新生成函数
+      if (settings.debugLoggingEnabled) {
+        appendDebugLog({
+          scope: "useDialogue",
+          event: "request-error",
+          data: {
+            actionText,
+            isSystemAction,
+            errorMessage: error?.message || "Unknown error",
+          },
+        });
+      }
+
       const retryAction = () => {
         if (lastActionRef.current) {
           // 移除错误消息和上一次的用户消息（如果存在）

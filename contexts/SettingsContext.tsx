@@ -1,47 +1,73 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { setNetworkDebugLoggingEnabled } from '../services/debugLogService';
 
-// AI配置接口
 export interface AIConfig {
     apiBase: string;
     apiKey: string;
     model: string;
 }
 
-// 显示模式
 export type DisplayMode = 'desktop' | 'mobile';
 
-// 设置接口
 export interface Settings {
     mainAI: AIConfig;
-    contentAI: AIConfig; // 副AI，用于生成手机内容
-    useSillyTavernGenerate: boolean; // 是否优先使用酒馆 ST_API.prompt.generate
-    displayMode: DisplayMode; // 显示模式：desktop（电脑模式）或 mobile（手机模式）
-    presetContent: string; // 导入的预设内容
-    writingStyle: string; // 描写规范（控制AI回复的字数）
-    perspective: string; // 人称描写（控制是第几人称）
-    nsfwStyle: string; // NFSW描写规范（告诉AI怎么写色色）
-    jailbreakPrompt: string; // 破限制提示词（用来破限制）
+    contentAI: AIConfig;
+    useSillyTavernGenerate: boolean;
+    debugLoggingEnabled: boolean;
+    displayMode: DisplayMode;
+    presetContent: string;
+    writingStyle: string;
+    perspective: string;
+    nsfwStyle: string;
+    jailbreakPrompt: string;
 }
 
-// 默认配置
+const defaultMainApiBase =
+    import.meta.env.VITE_MAIN_AI_API_BASE ||
+    import.meta.env.VITE_OPENAI_API_BASE ||
+    import.meta.env.VITE_AI_API_BASE ||
+    'https://api.openai.com/v1';
+
+const defaultMainApiKey =
+    import.meta.env.VITE_MAIN_AI_API_KEY ||
+    import.meta.env.VITE_OPENAI_API_KEY ||
+    import.meta.env.VITE_AI_API_KEY ||
+    '';
+
+const defaultMainModel =
+    import.meta.env.VITE_MAIN_AI_MODEL ||
+    import.meta.env.VITE_OPENAI_MODEL ||
+    import.meta.env.VITE_AI_MODEL ||
+    'gpt-4o-mini';
+
+const defaultContentApiBase =
+    import.meta.env.VITE_CONTENT_AI_API_BASE || defaultMainApiBase;
+
+const defaultContentApiKey =
+    import.meta.env.VITE_CONTENT_AI_API_KEY || defaultMainApiKey;
+
+const defaultContentModel =
+    import.meta.env.VITE_CONTENT_AI_MODEL || defaultMainModel;
+
 const defaultSettings: Settings = {
     mainAI: {
-        apiBase: 'https://api.openai.com/v1',
-        apiKey: '',
-        model: 'gpt-4o-mini'
+        apiBase: defaultMainApiBase,
+        apiKey: defaultMainApiKey,
+        model: defaultMainModel
     },
     contentAI: {
-        apiBase: 'https://api.openai.com/v1',
-        apiKey: '',
-        model: 'gpt-4o-mini'
+        apiBase: defaultContentApiBase,
+        apiKey: defaultContentApiKey,
+        model: defaultContentModel
     },
     useSillyTavernGenerate: false,
-    displayMode: 'desktop', // 默认电脑模式
-    presetContent: '', // 默认无预设
-    writingStyle: '', // 默认无描写规范
-    perspective: '', // 默认无人称描写
-    nsfwStyle: '', // 默认无NFSW描写规范
-    jailbreakPrompt: '' // 默认无破限制提示词
+    debugLoggingEnabled: false,
+    displayMode: 'desktop',
+    presetContent: '',
+    writingStyle: '',
+    perspective: '',
+    nsfwStyle: '',
+    jailbreakPrompt: ''
 };
 
 interface SettingsContextType {
@@ -50,6 +76,7 @@ interface SettingsContextType {
     updateMainAI: (config: Partial<AIConfig>) => void;
     updateContentAI: (config: Partial<AIConfig>) => void;
     updateUseSillyTavernGenerate: (enabled: boolean) => void;
+    updateDebugLoggingEnabled: (enabled: boolean) => void;
     updateDisplayMode: (mode: DisplayMode) => void;
     updatePresetContent: (content: string) => void;
     updateWritingStyle: (style: string) => void;
@@ -61,13 +88,11 @@ interface SettingsContextType {
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
-// 从localStorage加载设置
 const loadSettings = (): Settings => {
     try {
         const saved = localStorage.getItem('game_settings');
         if (saved) {
             const parsed = JSON.parse(saved);
-            // 深度合并，确保所有字段都存在
             const loaded: Settings = {
                 mainAI: {
                     apiBase: parsed.mainAI?.apiBase || defaultSettings.mainAI.apiBase,
@@ -80,6 +105,7 @@ const loadSettings = (): Settings => {
                     model: parsed.contentAI?.model || defaultSettings.contentAI.model
                 },
                 useSillyTavernGenerate: parsed.useSillyTavernGenerate ?? defaultSettings.useSillyTavernGenerate,
+                debugLoggingEnabled: parsed.debugLoggingEnabled ?? defaultSettings.debugLoggingEnabled,
                 displayMode: parsed.displayMode || defaultSettings.displayMode,
                 presetContent: parsed.presetContent ?? defaultSettings.presetContent,
                 writingStyle: parsed.writingStyle ?? defaultSettings.writingStyle,
@@ -87,16 +113,16 @@ const loadSettings = (): Settings => {
                 nsfwStyle: parsed.nsfwStyle ?? defaultSettings.nsfwStyle,
                 jailbreakPrompt: parsed.jailbreakPrompt ?? defaultSettings.jailbreakPrompt
             };
-            console.log('从localStorage加载设置:', loaded);
+            console.log('Loaded settings from localStorage:', loaded);
             return loaded;
         }
     } catch (error) {
         console.error('Failed to load settings:', error);
     }
+
     return defaultSettings;
 };
 
-// 保存设置到localStorage
 const saveSettings = (settings: Settings) => {
     try {
         localStorage.setItem('game_settings', JSON.stringify(settings));
@@ -108,10 +134,13 @@ const saveSettings = (settings: Settings) => {
 export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [settings, setSettings] = useState<Settings>(loadSettings);
 
-    // 当设置改变时自动保存
     useEffect(() => {
         saveSettings(settings);
     }, [settings]);
+
+    useEffect(() => {
+        setNetworkDebugLoggingEnabled(settings.debugLoggingEnabled);
+    }, [settings.debugLoggingEnabled]);
 
     const updateSettings = (newSettings: Partial<Settings>) => {
         setSettings(prev => ({ ...prev, ...newSettings }));
@@ -135,6 +164,13 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
         setSettings(prev => ({
             ...prev,
             useSillyTavernGenerate: enabled
+        }));
+    };
+
+    const updateDebugLoggingEnabled = (enabled: boolean) => {
+        setSettings(prev => ({
+            ...prev,
+            debugLoggingEnabled: enabled
         }));
     };
 
@@ -162,7 +198,7 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
     const updatePerspective = (perspective: string) => {
         setSettings(prev => ({
             ...prev,
-            perspective: perspective
+            perspective
         }));
     };
 
@@ -192,6 +228,7 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
                 updateMainAI,
                 updateContentAI,
                 updateUseSillyTavernGenerate,
+                updateDebugLoggingEnabled,
                 updateDisplayMode,
                 updatePresetContent,
                 updateWritingStyle,
@@ -206,7 +243,6 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
     );
 };
 
-// Hook用于在组件中使用设置
 export const useSettings = () => {
     const context = useContext(SettingsContext);
     if (context === undefined) {
@@ -214,5 +250,3 @@ export const useSettings = () => {
     }
     return context;
 };
-
-

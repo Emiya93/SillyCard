@@ -2,6 +2,7 @@ import { Download, FileText, Home, Loader2, Monitor, RotateCcw, Save, Smartphone
 import React, { useState } from 'react';
 import { DisplayMode, useSettings } from '../contexts/SettingsContext';
 import { getModels, ModelInfo } from '../services/aiService';
+import { clearDebugLogs, downloadDebugLogs, getDebugLogCount } from '../services/debugLogService';
 import { isMobileDevice } from '../utils/deviceUtils';
 
 // 设置面板组件 - 用于配置AI服务
@@ -11,7 +12,7 @@ interface SettingsPanelProps {
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToMain }) => {
-    const { settings, updateMainAI, updateContentAI, updateUseSillyTavernGenerate, updateDisplayMode, resetSettings } = useSettings();
+    const { settings, updateMainAI, updateContentAI, updateUseSillyTavernGenerate, updateDebugLoggingEnabled, updateDisplayMode, resetSettings } = useSettings();
     
     // 标签页状态
     const [activeTab, setActiveTab] = useState<'ai' | 'display'>('ai');
@@ -20,17 +21,21 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
     const [mainAI, setMainAI] = useState(settings.mainAI);
     const [contentAI, setContentAI] = useState(settings.contentAI);
     const [useSillyTavernGenerate, setUseSillyTavernGenerate] = useState(settings.useSillyTavernGenerate);
+    const [debugLoggingEnabled, setDebugLoggingEnabled] = useState(settings.debugLoggingEnabled);
     const [displayMode, setDisplayMode] = useState<DisplayMode>(settings.displayMode);
+    const [debugLogCount, setDebugLogCount] = useState(getDebugLogCount());
     
     // 当settings变化时，同步到本地状态
     React.useEffect(() => {
         setMainAI(settings.mainAI);
         setContentAI(settings.contentAI);
         setUseSillyTavernGenerate(settings.useSillyTavernGenerate);
+        setDebugLoggingEnabled(settings.debugLoggingEnabled);
         setDisplayMode(settings.displayMode);
+        setDebugLogCount(getDebugLogCount());
     }, [settings.mainAI.apiBase, settings.mainAI.apiKey, settings.mainAI.model, 
         settings.contentAI.apiBase, settings.contentAI.apiKey, settings.contentAI.model,
-        settings.useSillyTavernGenerate, settings.displayMode]);
+        settings.useSillyTavernGenerate, settings.debugLoggingEnabled, settings.displayMode]);
     
     // 模型列表相关状态
     const [mainModels, setMainModels] = useState<ModelInfo[]>([]);
@@ -121,14 +126,17 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
         updateMainAI(updatedMainAI);
         updateContentAI(updatedContentAI);
         updateUseSillyTavernGenerate(useSillyTavernGenerate);
+        updateDebugLoggingEnabled(debugLoggingEnabled);
         updateDisplayMode(displayMode);
         
         // 强制保存到localStorage
         try {
             const currentSettings = {
+                ...settings,
                 mainAI: updatedMainAI,
                 contentAI: updatedContentAI,
                 useSillyTavernGenerate: useSillyTavernGenerate,
+                debugLoggingEnabled: debugLoggingEnabled,
                 displayMode: displayMode
             };
             localStorage.setItem('game_settings', JSON.stringify(currentSettings));
@@ -148,10 +156,24 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
             setMainAI(settings.mainAI);
             setContentAI(settings.contentAI);
             setUseSillyTavernGenerate(settings.useSillyTavernGenerate);
+            setDebugLoggingEnabled(settings.debugLoggingEnabled);
         }
     };
 
     // 检测是否为移动端
+    const handleDownloadDebugLogs = () => {
+        downloadDebugLogs();
+    };
+
+    const handleClearDebugLogs = () => {
+        if (!confirm('Clear saved debug logs?')) {
+            return;
+        }
+
+        clearDebugLogs();
+        setDebugLogCount(0);
+    };
+
     const isMobile = isMobileDevice();
     
     return (
@@ -249,6 +271,48 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                             </div>
 
                             {/* 接口地址 */}
+                            <div className="bg-white/80 rounded-xl border border-blue-100 p-4">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div className="min-w-0">
+                                        <label className="block text-sm font-semibold text-gray-800">
+                                            Debug log for real I/O
+                                        </label>
+                                        <p className="text-xs text-gray-600 mt-1 leading-relaxed">
+                                            Save real user input, final model payload, raw model output, and cleaned reply into local log storage instead of the browser console.
+                                        </p>
+                                        <p className="text-xs text-gray-500 mt-2">
+                                            Saved entries: {debugLogCount}
+                                        </p>
+                                    </div>
+                                    <label className="inline-flex items-center gap-2 shrink-0">
+                                        <input
+                                            type="checkbox"
+                                            checked={debugLoggingEnabled}
+                                            onChange={(e) => setDebugLoggingEnabled(e.target.checked)}
+                                            className="h-5 w-5 accent-blue-600"
+                                        />
+                                    </label>
+                                </div>
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                    <button
+                                        onClick={handleDownloadDebugLogs}
+                                        disabled={debugLogCount === 0}
+                                        className="px-4 py-2 bg-slate-700 hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-full text-sm font-semibold flex items-center gap-2 transition-all"
+                                    >
+                                        <FileText size={16} />
+                                        <span>Export logs</span>
+                                    </button>
+                                    <button
+                                        onClick={handleClearDebugLogs}
+                                        disabled={debugLogCount === 0}
+                                        className="px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed text-slate-700 rounded-full text-sm font-semibold flex items-center gap-2 transition-all"
+                                    >
+                                        <RotateCcw size={16} />
+                                        <span>Clear logs</span>
+                                    </button>
+                                </div>
+                            </div>
+
                             <div>
                                 <label className="block text-sm font-semibold text-gray-700 mb-2">
                                     接口地址

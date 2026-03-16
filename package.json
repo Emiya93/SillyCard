@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "predev": "node ./scripts/generate-character-card.mjs",
+    "generate:character-card": "node ./scripts/generate-character-card.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
