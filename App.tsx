@@ -11,6 +11,8 @@ import { useDialogue } from './hooks/useDialogue';
 import { useGameTime } from './hooks/useGameTime';
 import { useLocation } from './hooks/useLocation';
 import { loadGame, saveGame, shouldAutoSave } from './services/saveService';
+import { clearSystemInstructionCache } from './services/characterService';
+import { selectAIConfig } from './services/aiConfigUtils';
 import { setupSillyTavernEventListeners } from './services/sillytavernApiService';
 import { summarizeCharacterMessages } from './services/summaryService';
 import { AppID, BackpackItem, BodyStatus, CalendarEvent, GameTime, LocationID, Message, Tweet } from './types';
@@ -679,7 +681,9 @@ const AppContent: React.FC = () => {
     // 每5条角色消息生成一次总结
     if (characterMessageCount >= 5 && characterMessageCount % 5 === 0 && characterMessageCount > lastSummaryMessageCount.current) {
       lastSummaryMessageCount.current = characterMessageCount;
-      summarizeCharacterMessages(messages, settings.mainAI)
+      const summaryAIConfig = selectAIConfig(settings.contentAI, settings.mainAI);
+      console.log('[App] Generating calendar summary with', summaryAIConfig === settings.contentAI ? 'contentAI' : 'mainAI fallback');
+      summarizeCharacterMessages(messages, summaryAIConfig)
         .then(summary => {
           if (summary) {
             setTodaySummary(summary);
@@ -689,7 +693,7 @@ const AppContent: React.FC = () => {
           console.error('生成总结失败:', err);
         });
     }
-  }, [messages, settings.mainAI]);
+  }, [messages, settings.mainAI, settings.contentAI]);
 
   // 自动存档：每天早上7点自动保存
   useEffect(() => {
@@ -710,17 +714,12 @@ const AppContent: React.FC = () => {
       // 世界书更新回调
       (worldbookName: string, entries: any[]) => {
         console.log(`[SillyTavern] 世界书 "${worldbookName}" 已更新，清除缓存`);
-        // 导入clearSystemInstructionCache函数
-        import('./services/characterService').then(module => {
-          module.clearSystemInstructionCache();
-        });
+        clearSystemInstructionCache();
       },
       // 预设变更回调
       (presetName: string) => {
         console.log(`[SillyTavern] 预设 "${presetName}" 已变更，清除缓存`);
-        import('./services/characterService').then(module => {
-          module.clearSystemInstructionCache();
-        });
+        clearSystemInstructionCache();
       }
     );
 

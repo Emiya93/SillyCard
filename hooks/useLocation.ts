@@ -1,10 +1,11 @@
+import type { Dispatch, SetStateAction } from 'react';
 import { LocationID } from '../types';
 
 // 位置移动 Hook - 负责处理玩家位置移动相关的逻辑
 // 包括判断移动类型、计算时间消耗、生成移动描述等
 interface UseLocationProps {
     userLocation: LocationID;
-    setUserLocation: React.Dispatch<React.SetStateAction<LocationID>>;
+    setUserLocation: Dispatch<SetStateAction<LocationID>>;
     handleAction: (actionText: string, isSystemAction?: boolean) => Promise<void>;
     addMemory: (title: string, description: string, color?: string) => void;
     advance?: (minutes: number) => void; // 时间推进函数（可选）

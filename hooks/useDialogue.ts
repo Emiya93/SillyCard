@@ -1,8 +1,10 @@
 import type React from "react";
 import { useRef, useState } from "react";
 import { useSettings } from "../contexts/SettingsContext";
+import { selectAIConfig } from "../services/aiConfigUtils";
 import { calculateYellowHairBehaviorStage, decideTodayYellowHair, generateYellowHair, shouldTriggerYellowHair, shouldYellowHairAppearToday } from "../services/arcLightService";
 import { generateCharacterResponse } from "../services/characterService";
+import { generateTweetForPhoneApp } from "../services/phoneContentService";
 import {
   BackpackItem,
   BodyStatus,
@@ -117,9 +119,23 @@ interface UseDialogueProps {
   setUserLocation?: (location: LocationID) => void; // 设置用户位置函数（可选）
   onSaveGame?: (slotId: number, customName?: string) => void; // 保存游戏函数（可选）
   backpackItems?: BackpackItem[]; // 背包物品列表（用于检测对话中的使用/赠送）
-  onUseItem?: (itemId: string, name: string, description: string) => void; // 使用物品函数
-  onGiftItem?: (itemId: string, name: string, description: string) => void; // 赠送物品函数
-  onGiftClothing?: (outfitId: string, itemId: string) => void; // 赠送服装函数
+  onUseItem?: (
+    itemId: string,
+    name: string,
+    description: string,
+    handleActionCallback?: (text: string, isSystem?: boolean) => Promise<void>
+  ) => Promise<void> | void; // 使用物品函数
+  onGiftItem?: (
+    itemId: string,
+    name: string,
+    description: string,
+    handleActionCallback?: (text: string, isSystem?: boolean) => Promise<void>
+  ) => Promise<void> | void; // 赠送物品函数
+  onGiftClothing?: (
+    outfitId: string,
+    itemId: string,
+    handleActionCallback?: (text: string, isSystem?: boolean) => Promise<void>
+  ) => Promise<void> | void; // 赠送服装函数
 }
 
 export const useDialogue = ({
@@ -357,6 +373,8 @@ export const useDialogue = ({
 
     let promptText = actionText;
     const isWeChatMessage = actionText.startsWith("(发送微信)");
+    const phoneAIConfig = selectAIConfig(settings.contentAI, settings.mainAI);
+    const selectedAIConfig = isWeChatMessage ? phoneAIConfig : settings.mainAI;
     
     // 精确位置系统：判断是否为远程互动（不能直接找到温婉）
     // 1. 不同大地点：肯定是远程
@@ -482,10 +500,11 @@ export const useDialogue = ({
     try {
       // 调试：检查配置
       console.log("[useDialogue] 调用AI前的配置检查:", {
-        apiBase: settings.mainAI.apiBase,
-        hasApiKey: !!settings.mainAI.apiKey,
-        model: settings.mainAI.model,
-        apiKeyLength: settings.mainAI.apiKey?.length || 0,
+        apiTarget: isWeChatMessage ? "contentAI" : "mainAI",
+        apiBase: selectedAIConfig.apiBase,
+        hasApiKey: !!selectedAIConfig.apiKey,
+        model: selectedAIConfig.model,
+        apiKeyLength: selectedAIConfig.apiKey?.length || 0,
       });
 
       const response = await generateCharacterResponse(
@@ -493,7 +512,7 @@ export const useDialogue = ({
         enhancedPromptText, // 使用增强后的promptText（包含黄毛信息）
         statusWithContext,
         userLocation,
-        settings.mainAI, // 使用设置中的主AI配置
+        selectedAIConfig, // 微信内容优先使用副AI，其余使用主AI
         isRemoteWeChat, // 传递是否为远程微信消息
         {
           todaySummary,
@@ -786,15 +805,39 @@ export const useDialogue = ({
       }
 
       // 处理生成的推特（如果AI生成了推特）
+      let finalGeneratedTweet = response.generatedTweet;
       if (response.generatedTweet && response.generatedTweet.content) {
+        try {
+          const phoneTweet = await generateTweetForPhoneApp(
+            {
+              latestReply: replyText,
+              currentStatus: response.status,
+              userLocation,
+              todaySummary,
+              gameTime,
+              draftTweet: response.generatedTweet,
+            },
+            phoneAIConfig
+          );
+
+          if (phoneTweet) {
+            finalGeneratedTweet = phoneTweet;
+            console.log('[useDialogue] 推文内容已切换为副AI生成');
+          }
+        } catch (tweetError) {
+          console.warn('[useDialogue] 副AI生成推文失败，回退到主剧情AI草稿:', tweetError);
+        }
+      }
+
+      if (finalGeneratedTweet && finalGeneratedTweet.content) {
         const newTweet: Tweet = {
           id: Date.now().toString(),
           author: "婉婉酱_Ovo",
           handle: "@wenwan_cute",
           avatar: avatarUrl,
-          content: response.generatedTweet.content,
+          content: finalGeneratedTweet.content,
           hasImage: true,
-          imageDescription: response.generatedTweet.imageDescription,
+          imageDescription: finalGeneratedTweet.imageDescription,
           likes: 0,
           retweets: 0,
           time: "刚刚",
@@ -803,9 +846,9 @@ export const useDialogue = ({
         };
         setTweets((prev) => [newTweet, ...prev]);
         const contentPreview =
-          response.generatedTweet.content.length > 10
-            ? response.generatedTweet.content.substring(0, 10) + "..."
-            : response.generatedTweet.content;
+          finalGeneratedTweet.content.length > 10
+            ? finalGeneratedTweet.content.substring(0, 10) + "..."
+            : finalGeneratedTweet.content;
         addMemory(
           "新推特",
           `温婉发布了一条新动态: "${contentPreview}"`,

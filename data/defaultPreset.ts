@@ -1,8 +1,6 @@
 // 默认预设 - "小猫之神"预设中 enabled=true 的 prompts
 // 从用户提供的"小猫之神"预设JSON中提取 enabled=true 的内容
 
-import { parsePresetFromJSON } from '../services/presetService';
-
 // 从预设JSON中提取的默认预设内容
 // 这个内容会在 SettingsContext 初始化时加载
 export async function getDefaultPresetContent(): Promise<string> {
