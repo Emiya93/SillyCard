@@ -2,8 +2,6 @@ import { WORLD_BOOK_CONTENT } from "../data/worldbook";
 import { assembleRules } from "../data/rules/ruleAssembler";
 import { assembleCodeRules } from "../data/rules/codeRules/codeRuleAssembler";
 
-const AUTO_DOWNLOAD_SESSION_KEY = "wenwan_character_card_auto_downloaded";
-const CHARACTER_CARD_FILE_NAME = "wenwan-sillytavern-character-card.json";
 const CHARACTER_NAME = "温婉";
 const WORLD_BOOK_NAME = "温婉-游戏世界设定";
 
@@ -40,7 +38,6 @@ interface TavernCardData {
   scenario: string;
   first_mes: string;
   mes_example: string;
-  creator_notes: string;
   system_prompt: string;
   post_history_instructions: string;
   alternate_greetings: string[];
@@ -68,8 +65,6 @@ interface TavernCardExport {
   scenario: string;
   first_mes: string;
   mes_example: string;
-  creatorcomment: string;
-  creator_notes: string;
   system_prompt: string;
   post_history_instructions: string;
   avatar: string;
@@ -137,14 +132,6 @@ export function buildWenwanCharacterCard(): TavernCardExport {
   ].join("\n");
 
   const systemPrompt = buildSystemPrompt();
-  const creatorNotes = [
-    "这个 JSON 由 SillyCard 运行时自动生成，目标是让酒馆能直接导入一个可用的温婉角色卡。",
-    "核心人设、世界观和规则尽量来自项目源码；完整世界设定还被放进了 character_book 里。",
-    "",
-    "=== 项目世界书 ===",
-    WORLD_BOOK_CONTENT.trim(),
-  ].join("\n");
-
   const characterBook = buildCharacterBook();
 
   const data: TavernCardData = {
@@ -154,7 +141,6 @@ export function buildWenwanCharacterCard(): TavernCardExport {
     scenario,
     first_mes: WENWAN_INITIAL_MESSAGE,
     mes_example: mesExample,
-    creator_notes: creatorNotes,
     system_prompt: systemPrompt,
     post_history_instructions: "",
     alternate_greetings: [],
@@ -182,8 +168,6 @@ export function buildWenwanCharacterCard(): TavernCardExport {
     scenario,
     first_mes: WENWAN_INITIAL_MESSAGE,
     mes_example: mesExample,
-    creatorcomment: creatorNotes,
-    creator_notes: creatorNotes,
     system_prompt: systemPrompt,
     post_history_instructions: "",
     avatar: "",
@@ -196,54 +180,4 @@ export function buildWenwanCharacterCard(): TavernCardExport {
     character_book: characterBook,
     json_data: JSON.stringify(data),
   };
-}
-
-function hasAutoDownloadedCharacterCard(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  try {
-    return window.sessionStorage.getItem(AUTO_DOWNLOAD_SESSION_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function markCharacterCardDownloaded(): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.sessionStorage.setItem(AUTO_DOWNLOAD_SESSION_KEY, "1");
-  } catch {
-    // Ignore storage failures and still allow download.
-  }
-}
-
-export function autoDownloadWenwanCharacterCard(): boolean {
-  if (typeof window === "undefined" || typeof document === "undefined") {
-    return false;
-  }
-
-  if (hasAutoDownloadedCharacterCard()) {
-    return false;
-  }
-
-  const characterCard = buildWenwanCharacterCard();
-  const json = JSON.stringify(characterCard, null, 2);
-  const blob = new Blob([json], { type: "application/json;charset=utf-8" });
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = CHARACTER_CARD_FILE_NAME;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
-
-  markCharacterCardDownloaded();
-  return true;
 }

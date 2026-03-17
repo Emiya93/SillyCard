@@ -75,4 +75,17 @@ Default local URL: [http://localhost:3000](http://localhost:3000)
 npm.cmd run build
 ```
 
+Running `npm.cmd run build` now prepares a dedicated SillyTavern package in `dist/sillytavern/`:
+
+- `dist/sillytavern/wenwan-sillytavern-character-card.json`: embedded frontend character card in the same shape as the provided `温婉.json`
+- `dist/sillytavern/sillytavern-host.html`: the same host HTML extracted as a standalone file
+
+Compatibility notes:
+
+- Only one character card JSON is kept after build: `dist/sillytavern/wenwan-sillytavern-character-card.json`.
+- The generated card launches the embedded frontend through `data.extensions.regex_scripts`, using the same `first_mes = "1"` trigger style as the provided sample card.
+- The embedded page URL is fixed to `http://127.0.0.1:3000/`.
+- This assumes your SillyTavern setup already has the same execution environment as the sample card, such as embedded regex scripts plus your existing renderer/helper setup.
+- If you only need one artifact manually, use `npm.cmd run generate:character-card` or `npm.cmd run generate:sillytavern-host`.
+
 If you only want to confirm that the UI opens, the app can still start without an API key. AI-driven interactions will fail until a valid API configuration is provided.

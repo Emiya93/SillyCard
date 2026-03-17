@@ -19,6 +19,15 @@
     
     const data = event.data;
     if (!data || typeof data !== 'object') return;
+
+    const allowedSource = window.__wenwanAllowedMessageSource;
+    if (allowedSource && event.source !== allowedSource) return;
+
+    const allowedOrigins = window.__wenwanAllowedOrigins;
+    if (Array.isArray(allowedOrigins) && allowedOrigins.length > 0) {
+      const incomingOrigin = event.origin || 'null';
+      if (!allowedOrigins.includes(incomingOrigin)) return;
+    }
     
     // 调试日志：记录收到的消息
     if (data.type === 'ST_API_CALL' || data.type === 'SILLYTAVERN_API_CALL' || data.type === 'SILLYTAVERN_GET_DATA') {

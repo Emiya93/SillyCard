@@ -1,14 +1,18 @@
-﻿import fs from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildSillyTavernHostHtml } from "./generate-sillytavern-host.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
 
-const OUTPUT_FILE_NAME = "wenwan-sillytavern-character-card.json";
-const OUTPUT_PATH = path.join(projectRoot, OUTPUT_FILE_NAME);
-const WORLD_BOOK_NAME = "温婉-游戏世界设定";
+export const CHARACTER_CARD_FILE_NAME = "wenwan-sillytavern-character-card.json";
+const OUTPUT_PATH = path.join(projectRoot, "dist", "sillytavern", CHARACTER_CARD_FILE_NAME);
+const CHARACTER_NAME = "\u6e29\u5a49";
+const WORLD_BOOK_NAME = `${CHARACTER_NAME}-\u6e38\u620f\u4e16\u754c\u8bbe\u5b9a`;
+const FRONTEND_TRIGGER = "1";
+const FRONTEND_REGEX_ID = "58f10392-937a-4fcf-8c79-69f9d744e0f8";
 
 function readSource(relativePath) {
   const fullPath = path.join(projectRoot, relativePath);
@@ -36,121 +40,197 @@ function extractTemplateExport(relativePath, exportName) {
   return source.slice(contentStart, contentEnd).trim();
 }
 
-function assembleCodeRules() {
-  const sections = [
-    extractTemplateExport("data/rules/codeRules/characterProfileRules.ts", "CHARACTER_PROFILE_RULES"),
-    extractTemplateExport("data/rules/codeRules/behaviorRules.ts", "BEHAVIOR_RULES"),
-    extractTemplateExport("data/rules/codeRules/timeScheduleRules.ts", "TIME_SCHEDULE_RULES"),
-    extractTemplateExport("data/rules/codeRules/locationInteractionRules.ts", "LOCATION_INTERACTION_RULES"),
-    extractTemplateExport("data/rules/codeRules/socialMediaRules.ts", "SOCIAL_MEDIA_RULES"),
-    extractTemplateExport("data/rules/codeRules/gameplayLogicRules.ts", "GAMEPLAY_LOGIC_RULES"),
-    extractTemplateExport("data/rules/codeRules/emotionClothingRules.ts", "EMOTION_CLOTHING_RULES"),
-    extractTemplateExport("data/rules/codeRules/responseFormatRules.ts", "RESPONSE_FORMAT_RULES"),
-  ];
-
-  return sections.join("\n\n");
-}
-
-function assembleGameRules() {
-  const sections = [
-    {
-      name: "身体部位开发",
-      content: extractTemplateExport("data/rules/bodyDevelopmentRules.ts", "BODY_DEVELOPMENT_RULES"),
-    },
-    {
-      name: "时间系统",
-      content: extractTemplateExport("data/rules/timeRules.ts", "TIME_RULES"),
-    },
-    {
-      name: "互动规则",
-      content: extractTemplateExport("data/rules/interactionRules.ts", "INTERACTION_RULES"),
-    },
-  ];
-
-  return sections
+function assembleRuleSections(sectionSpecs) {
+  return sectionSpecs
     .map((section) => `## ${section.name}\n\n${section.content}`)
     .join("\n\n---\n\n");
 }
 
-function buildCharacterBook(worldBookContent) {
+function assembleGameplaySections() {
+  const sections = [
+    {
+      name: "Body Development",
+      content: extractTemplateExport("data/rules/bodyDevelopmentRules.ts", "BODY_DEVELOPMENT_RULES"),
+    },
+    {
+      name: "Time System",
+      content: extractTemplateExport("data/rules/timeRules.ts", "TIME_RULES"),
+    },
+    {
+      name: "Interaction Rules",
+      content: extractTemplateExport("data/rules/interactionRules.ts", "INTERACTION_RULES"),
+    },
+  ];
+
+  return assembleRuleSections(sections);
+}
+
+function assembleBehaviorSections() {
+  const sections = [
+    {
+      name: "Behavior Rules",
+      content: extractTemplateExport("data/rules/codeRules/behaviorRules.ts", "BEHAVIOR_RULES"),
+    },
+    {
+      name: "Time Schedule Rules",
+      content: extractTemplateExport("data/rules/codeRules/timeScheduleRules.ts", "TIME_SCHEDULE_RULES"),
+    },
+    {
+      name: "Location Interaction Rules",
+      content: extractTemplateExport("data/rules/codeRules/locationInteractionRules.ts", "LOCATION_INTERACTION_RULES"),
+    },
+    {
+      name: "Social Media Rules",
+      content: extractTemplateExport("data/rules/codeRules/socialMediaRules.ts", "SOCIAL_MEDIA_RULES"),
+    },
+    {
+      name: "Gameplay Logic Rules",
+      content: extractTemplateExport("data/rules/codeRules/gameplayLogicRules.ts", "GAMEPLAY_LOGIC_RULES"),
+    },
+    {
+      name: "Emotion Clothing Rules",
+      content: extractTemplateExport("data/rules/codeRules/emotionClothingRules.ts", "EMOTION_CLOTHING_RULES"),
+    },
+    {
+      name: "Response Format Rules",
+      content: extractTemplateExport("data/rules/codeRules/responseFormatRules.ts", "RESPONSE_FORMAT_RULES"),
+    },
+  ];
+
+  return assembleRuleSections(sections);
+}
+
+function buildCharacterBookExtensions(displayIndex, position) {
+  return {
+    position,
+    exclude_recursion: false,
+    display_index: displayIndex,
+    probability: 100,
+    useProbability: false,
+    depth: 4,
+    selectiveLogic: 0,
+    outlet_name: "",
+    group: "",
+    group_override: false,
+    group_weight: 100,
+    prevent_recursion: false,
+    delay_until_recursion: false,
+    scan_depth: null,
+    match_whole_words: null,
+    use_group_scoring: false,
+    case_sensitive: null,
+    automation_id: "",
+    role: 0,
+    vectorized: false,
+    sticky: 0,
+    cooldown: 0,
+    delay: 0,
+    match_persona_description: false,
+    match_character_description: false,
+    match_character_personality: false,
+    match_character_depth_prompt: false,
+    match_scenario: false,
+    match_creator_notes: false,
+    triggers: [],
+    ignore_budget: false,
+  };
+}
+
+function buildCharacterBook(worldBookContent, behaviorContent, profileContent) {
   return {
     name: WORLD_BOOK_NAME,
     entries: [
       {
         id: 0,
-        keys: ["温婉", "哥哥", "同居", "学校", "周末", "家"],
+        keys: [CHARACTER_NAME, "\u54e5\u54e5", "\u540c\u5c45", "\u5b66\u6821", "\u5468\u672b", "\u5bb6"],
         secondary_keys: [],
-        comment: "游戏世界设定",
+        comment: "\u6e38\u620f\u4e16\u754c\u8bbe\u5b9a",
         content: worldBookContent,
         constant: true,
         selective: false,
         enabled: true,
-        insertion_order: 0,
-        extensions: {},
+        insertion_order: 98,
+        position: "after_char",
+        use_regex: false,
+        extensions: buildCharacterBookExtensions(0, 1),
+      },
+      {
+        id: 1,
+        keys: ["\u89c4\u5219", "\u7cfb\u7edf", "\u73a9\u6cd5"],
+        secondary_keys: [],
+        comment: "\u73a9\u6cd5\u89c4\u5219",
+        content: behaviorContent,
+        constant: true,
+        selective: false,
+        enabled: true,
+        insertion_order: 99,
+        position: "after_char",
+        use_regex: false,
+        extensions: buildCharacterBookExtensions(1, 1),
+      },
+      {
+        id: 2,
+        keys: ["\u4eba\u8bbe"],
+        secondary_keys: [],
+        comment: CHARACTER_NAME,
+        content: profileContent,
+        constant: true,
+        selective: false,
+        enabled: true,
+        insertion_order: 100,
+        position: "before_char",
+        use_regex: false,
+        extensions: buildCharacterBookExtensions(2, 0),
       },
     ],
   };
 }
 
-function buildCharacterCard() {
+function buildFrontendRegexScripts() {
+  const hostHtml = buildSillyTavernHostHtml();
+
+  return [
+    {
+      id: FRONTEND_REGEX_ID,
+      scriptName: "`111`",
+      findRegex: FRONTEND_TRIGGER,
+      replaceString: `\`\`\`\n${hostHtml}\n\`\`\``,
+      trimStrings: [],
+      placement: [1, 2],
+      disabled: false,
+      markdownOnly: true,
+      promptOnly: true,
+      runOnEdit: true,
+      substituteRegex: 0,
+      minDepth: null,
+      maxDepth: null,
+    },
+  ];
+}
+
+function buildCharacterCardCore() {
   const worldBookContent = extractTemplateExport("data/worldbook.ts", "WORLD_BOOK_CONTENT");
-  const initialMessage = extractTemplateExport(
-    "services/characterCardExportService.ts",
-    "WENWAN_INITIAL_MESSAGE",
+  const behaviorContent = [assembleGameplaySections(), assembleBehaviorSections()].join("\n\n---\n\n");
+  const profileContent = extractTemplateExport(
+    "data/rules/codeRules/characterProfileRules.ts",
+    "CHARACTER_PROFILE_RULES",
   );
-  const systemPrompt = [assembleCodeRules(), assembleGameRules()].join("\n\n");
-
-  const description = [
-    "温婉，18 岁，高三学生，和哥哥相依为命地生活在父母留下的家里。",
-    "她外表是高冷优雅的校花和优等生，也是活跃的 Cos 社成员；私下里却会在哥哥面前露出撒娇、试探、害羞又带一点小恶魔的样子。",
-    "这张卡尽量保留了项目里的世界观、时间表、地点设定、身体状态系统和互动规则，方便在 SillyTavern 中复现原作玩法。",
-  ].join("\n");
-
-  const personality = [
-    "聪明、敏感、骄矜，擅长用若有若无的挑逗试探哥哥。",
-    "对外冷淡克制，对哥哥依赖、在意、占有欲强。",
-    "会害羞，会嘴硬，会装作若无其事，但内心活动很多。",
-  ].join("\n");
-
-  const scenario = [
-    "故事开始于一个普通周六下午。你是温婉的哥哥，正在与她共同生活。",
-    "温婉会按照时间表在家、学校或城市各处活动；当你们不在同一地点时，只能通过微信等方式联系。",
-    "互动会影响好感度、堕落度、身体状态和后续剧情发展。",
-  ].join("\n");
-
-  const mesExample = [
-    "<START>",
-    "哥哥：周末想做什么？",
-    "温婉：哼，这种事还要我提醒你吗？",
-    "温婉：（她把脸别开，脚尖却轻轻碰了碰你的腿）",
-    "温婉：要是你愿意陪我出去逛逛...我也不是不能考虑一下。",
-  ].join("\n");
-
-  const creatorNotes = [
-    "这个 JSON 由 SillyCard 的 predev 脚本自动生成，目标是让酒馆能直接导入一个可用的温婉角色卡。",
-    "核心人设、世界观和规则尽量来自项目源码；完整世界设定也被放进了 character_book 里。",
-    "",
-    "=== 项目世界书 ===",
-    worldBookContent,
-  ].join("\n");
-
-  const characterBook = buildCharacterBook(worldBookContent);
-  const tags = ["兄妹", "校园", "同居", "Cosplay", "剧情模拟", "SillyCard"];
+  const characterBook = buildCharacterBook(worldBookContent, behaviorContent, profileContent);
+  const tags = [];
 
   const data = {
-    name: "温婉",
-    description,
-    personality,
-    scenario,
-    first_mes: initialMessage,
-    mes_example: mesExample,
-    creator_notes: creatorNotes,
-    system_prompt: systemPrompt,
+    name: CHARACTER_NAME,
+    description: "",
+    personality: "",
+    scenario: "",
+    first_mes: FRONTEND_TRIGGER,
+    mes_example: "",
+    system_prompt: "",
     post_history_instructions: "",
-    alternate_greetings: [],
     tags,
-    creator: "SillyCard",
-    character_version: "auto-export-1",
+    creator: "",
+    character_version: "",
+    alternate_greetings: [],
     extensions: {
       talkativeness: "0.5",
       fav: false,
@@ -160,40 +240,47 @@ function buildCharacterCard() {
         depth: 4,
         role: "system",
       },
+      regex_scripts: buildFrontendRegexScripts(),
     },
     group_only_greetings: [],
     character_book: characterBook,
   };
 
   return {
-    name: "温婉",
-    description,
-    personality,
-    scenario,
-    first_mes: initialMessage,
-    mes_example: mesExample,
-    creatorcomment: creatorNotes,
-    creator_notes: creatorNotes,
-    system_prompt: systemPrompt,
-    post_history_instructions: "",
-    avatar: "",
+    name: CHARACTER_NAME,
+    description: "",
+    personality: "",
+    scenario: "",
+    first_mes: FRONTEND_TRIGGER,
+    mes_example: "",
+    avatar: "none",
     talkativeness: "0.5",
     fav: false,
     tags,
     spec: "chara_card_v3",
     spec_version: "3.0",
     data,
-    character_book: characterBook,
-    json_data: JSON.stringify(data),
+    create_date: new Date().toISOString(),
   };
 }
 
-function writeCharacterCard() {
-  const card = buildCharacterCard();
-  const json = `${JSON.stringify(card, null, 2)}\n`;
-  fs.writeFileSync(OUTPUT_PATH, json, "utf8");
-  console.log(`[generate-character-card] wrote ${OUTPUT_FILE_NAME}`);
+export function buildCharacterCard() {
+  return buildCharacterCardCore();
 }
 
-writeCharacterCard();
+function writeCharacterCardVariant(outputPath, card) {
+  const json = `${JSON.stringify(card, null, 4)}\n`;
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, json, "utf8");
+  const relativePath = path.relative(projectRoot, outputPath) || CHARACTER_CARD_FILE_NAME;
+  console.log(`[generate-character-card] wrote ${relativePath}`);
+  return outputPath;
+}
 
+export function writeCharacterCard(outputPath = OUTPUT_PATH) {
+  return writeCharacterCardVariant(outputPath, buildCharacterCard());
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  writeCharacterCard();
+}
