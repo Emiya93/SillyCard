@@ -22,6 +22,9 @@ interface PhoneInterfaceProps {
     calendarEvents?: any[];
     gameTime?: GameTime;
     onSkipToday?: () => void;
+    onSkipOneHour?: () => void;
+    onSkipThreeHours?: () => void;
+    onSkipSixHours?: () => void;
     onSkipTwoDays?: () => void;
     onSkipWeek?: () => void;
     todaySummary?: string;
@@ -60,6 +63,9 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
     calendarEvents,
     gameTime,
     onSkipToday,
+    onSkipOneHour,
+    onSkipThreeHours,
+    onSkipSixHours,
     onSkipTwoDays,
     onSkipWeek,
     todaySummary,
@@ -172,6 +178,9 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
                     calendarEvents={calendarEvents}
                     gameTime={gameTime}
                     onSkipToday={onSkipToday}
+                    onSkipOneHour={onSkipOneHour}
+                    onSkipThreeHours={onSkipThreeHours}
+                    onSkipSixHours={onSkipSixHours}
                     onSkipTwoDays={onSkipTwoDays}
                     onSkipWeek={onSkipWeek}
                     todaySummary={todaySummary}

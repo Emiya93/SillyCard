@@ -100,6 +100,9 @@ interface AppProps {
   tweets?: Tweet[]; // For TwitterApp
   gameTime?: GameTime; // For CalendarApp
   onSkipToday?: () => void; // For CalendarApp
+  onSkipOneHour?: () => void; // For CalendarApp
+  onSkipThreeHours?: () => void; // For CalendarApp
+  onSkipSixHours?: () => void; // For CalendarApp
   onSkipTwoDays?: () => void; // For CalendarApp
   onSkipWeek?: () => void; // For CalendarApp
   todaySummary?: string; // For CalendarApp - 今日总结
@@ -1243,6 +1246,9 @@ export const CalendarApp: React.FC<AppProps> = ({
     calendarEvents = [], 
     gameTime,
     onSkipToday,
+    onSkipOneHour,
+    onSkipThreeHours,
+    onSkipSixHours,
     onSkipTwoDays,
     onSkipWeek,
     todaySummary
@@ -1320,6 +1326,27 @@ export const CalendarApp: React.FC<AppProps> = ({
                         >
                             <Clock size={16} />
                             <span>30分钟</span>
+                        </button>
+                        <button
+                            onClick={onSkipOneHour}
+                            className="bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all rounded-xl p-3 text-xs font-bold text-gray-700 flex flex-col items-center gap-1"
+                        >
+                            <Clock size={16} />
+                            <span>1小时</span>
+                        </button>
+                        <button
+                            onClick={onSkipThreeHours}
+                            className="bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all rounded-xl p-3 text-xs font-bold text-gray-700 flex flex-col items-center gap-1"
+                        >
+                            <Clock size={16} />
+                            <span>3小时</span>
+                        </button>
+                        <button
+                            onClick={onSkipSixHours}
+                            className="bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all rounded-xl p-3 text-xs font-bold text-gray-700 flex flex-col items-center gap-1"
+                        >
+                            <Clock size={16} />
+                            <span>6小时</span>
                         </button>
                         <button
                             onClick={onSkipTwoDays}

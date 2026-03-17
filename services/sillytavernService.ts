@@ -115,6 +115,7 @@ export async function requestSillyTavernData(): Promise<{
   lorebook?: SillyTavernLorebook;
 } | null> {
   if (!isSillyTavern() || window.parent === window) {
+    console.warn('[SillyTavern Service] Cannot request SillyTavern bootstrap data outside a communicable iframe context.');
     return null;
   }
 
@@ -132,6 +133,9 @@ export async function requestSillyTavernData(): Promise<{
           resolved = true;
           clearTimeout(timeoutId);
           window.removeEventListener('message', messageHandler);
+          if (!event.data.character && !event.data.preset && !event.data.lorebook) {
+            console.warn('[SillyTavern Service] Received empty SillyTavern bootstrap data.');
+          }
           resolve({
             character: event.data.character,
             preset: event.data.preset,
@@ -145,6 +149,11 @@ export async function requestSillyTavernData(): Promise<{
           resolved = true;
           clearTimeout(timeoutId);
           window.removeEventListener('message', messageHandler);
+          if (event.data.error) {
+            console.warn('[SillyTavern Service] SillyTavern bootstrap request failed:', event.data.error);
+          } else if (!event.data.data) {
+            console.warn('[SillyTavern Service] SillyTavern bootstrap request returned an empty payload.');
+          }
           resolve(event.data.data || null);
           return;
         }
@@ -165,6 +174,7 @@ export async function requestSillyTavernData(): Promise<{
       }, '*');
     } catch (postError) {
       window.removeEventListener('message', messageHandler);
+      console.warn('[SillyTavern Service] Failed to send SillyTavern bootstrap request:', postError);
       resolve(null);
       return;
     }
@@ -173,6 +183,7 @@ export async function requestSillyTavernData(): Promise<{
       if (!resolved) {
         resolved = true;
         window.removeEventListener('message', messageHandler);
+        console.warn('[SillyTavern Service] Timed out while waiting for SillyTavern bootstrap data (3000ms).');
         resolve(null);
       }
     }, 3000);

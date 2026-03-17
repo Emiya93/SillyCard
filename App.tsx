@@ -131,6 +131,28 @@ const AppContent: React.FC = () => {
     return newTime;
   };
 
+  const calculateAdvancedTime = (currentTime: GameTime, minutesToAdvance: number): GameTime => {
+    const advancedDate = new Date(
+      currentTime.year,
+      currentTime.month - 1,
+      currentTime.day,
+      currentTime.hour,
+      currentTime.minute
+    );
+
+    advancedDate.setMinutes(advancedDate.getMinutes() + minutesToAdvance);
+
+    return {
+      ...currentTime,
+      year: advancedDate.getFullYear(),
+      month: advancedDate.getMonth() + 1,
+      day: advancedDate.getDate(),
+      weekday: advancedDate.getDay(),
+      hour: advancedDate.getHours(),
+      minute: advancedDate.getMinutes(),
+    };
+  };
+
   // 正常睡觉到第二天早上
   const handleSleepCancel = async () => {
     const oldTime = { ...gameTime };
@@ -581,9 +603,33 @@ const AppContent: React.FC = () => {
   });
 
   const previousTimeRef = useRef<GameTime>(gameTime);
+ 
+  const handleSkipByMinutes = async (minutes: number, label: string) => {
+    const newTime = calculateAdvancedTime(gameTime, minutes);
+    advance(minutes);
+
+    await handleAction(
+      `(System: 时间已经流逝了${label}，现在是${newTime.year}年${newTime.month}月${newTime.day}日${formatTime(newTime)}。生成一段剧情描述，描述这${label}里发生的事情，以及现在的情况。温婉在哪里、在做什么、心情如何。就像描述"前往电影院"一样，生成完整的剧情场景。)`,
+      true
+    );
+  };
+
+  const handleSkipOneHour = async () => {
+    await handleSkipByMinutes(60, '1小时');
+  };
+
+  const handleSkipThreeHours = async () => {
+    await handleSkipByMinutes(180, '3小时');
+  };
+
+  const handleSkipSixHours = async () => {
+    await handleSkipByMinutes(360, '6小时');
+  };
 
   // 包装跳过时间函数，使用 handleAction 生成AI剧情
   const handleSkipToday = async () => {
+    await handleSkipByMinutes(30, '30分钟');
+    return;
     const oldTime = { ...gameTime };
     // 推进30分钟
     advance(30);
@@ -875,6 +921,9 @@ const AppContent: React.FC = () => {
             calendarEvents={calendarEvents}
             gameTime={gameTime}
             onSkipToday={handleSkipToday}
+            onSkipOneHour={handleSkipOneHour}
+            onSkipThreeHours={handleSkipThreeHours}
+            onSkipSixHours={handleSkipSixHours}
             onSkipTwoDays={handleSkipTwoDays}
             onSkipWeek={handleSkipWeek}
             todaySummary={todaySummary}
@@ -1120,6 +1169,9 @@ const AppContent: React.FC = () => {
                   calendarEvents={calendarEvents}
                   gameTime={gameTime}
                   onSkipToday={handleSkipToday}
+                  onSkipOneHour={handleSkipOneHour}
+                  onSkipThreeHours={handleSkipThreeHours}
+                  onSkipSixHours={handleSkipSixHours}
                   onSkipTwoDays={handleSkipTwoDays}
                   onSkipWeek={handleSkipWeek}
                   todaySummary={todaySummary}

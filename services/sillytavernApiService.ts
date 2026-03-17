@@ -94,6 +94,13 @@ function getSTContext(): any {
   return null;
 }
 
+function getWorldbookApi(): any {
+  if (typeof window === 'undefined') return null;
+  const api = (window as any).ST_API;
+  if (!api) return null;
+  return api.worldBook ?? api.worldbook ?? null;
+}
+
 /**
  * 通过 postMessage 请求数据（跨域时使用）
  * 支持多种消息格式，以兼容不同的 SillyTavern 版本
@@ -103,7 +110,10 @@ async function requestViaPostMessage<T>(
   params: any = {},
   timeout: number = 5000
 ): Promise<T | null> {
-  if (window.parent === window) return null;
+  if (window.parent === window) {
+    console.warn(`[SillyTavern API] Cannot request ${action} via postMessage because the app is not inside an iframe.`, params);
+    return null;
+  }
 
   return new Promise((resolve) => {
     const messageId = `st_api_${action}_${Date.now()}_${Math.random()}`;
@@ -120,6 +130,9 @@ async function requestViaPostMessage<T>(
           resolved = true;
           clearTimeout(timeoutId);
           window.removeEventListener('message', messageHandler);
+          if (event.data.error) {
+            console.warn(`[SillyTavern API] postMessage request failed: ${action}`, event.data.error, params);
+          }
           const result = event.data.data !== undefined ? event.data.data : event.data;
           resolve(result as T);
           return;
@@ -161,6 +174,7 @@ async function requestViaPostMessage<T>(
       }, 100);
     } catch (error) {
       window.removeEventListener('message', messageHandler);
+      console.warn(`[SillyTavern API] postMessage send failed: ${action}`, error, params);
       resolve(null);
       return;
     }
@@ -281,11 +295,11 @@ export async function getWorldbookNames(): Promise<string[]> {
   }
   
   // 方法3: 通过 ST_API（如果可用，优先使用）
-  if (typeof (window as any).ST_API !== 'undefined' && 
-      typeof (window as any).ST_API.worldbook?.list === 'function') {
+  const worldbookApi = getWorldbookApi();
+  if (worldbookApi && typeof worldbookApi.list === 'function') {
     try {
-      console.log('[SillyTavern API] 使用 ST_API.worldbook.list()');
-      const result = await (window as any).ST_API.worldbook.list();
+      console.log('[SillyTavern API] 使用 ST_API.worldBook/worldbook.list()');
+      const result = await worldbookApi.list();
       // 根据文档，返回格式是 { worldBooks: [...] }
       if (result && Array.isArray(result.worldBooks)) {
         // 提取名称列表（只返回全局世界书）
@@ -297,7 +311,7 @@ export async function getWorldbookNames(): Promise<string[]> {
       // 兼容旧版本：如果直接返回数组
       if (Array.isArray(result)) return result;
     } catch (error) {
-      console.warn('[SillyTavern API] ST_API.worldbook.list 失败:', error);
+      console.warn('[SillyTavern API] ST_API.worldBook/worldbook.list 失败:', error);
     }
   }
   
@@ -315,6 +329,7 @@ export async function getWorldbookNames(): Promise<string[]> {
     }
   }
   
+  console.warn('[SillyTavern API] Failed to get worldbook names from SillyTavern.');
   return [];
 }
 
@@ -362,18 +377,19 @@ export async function getWorldbook(worldbookName: string): Promise<any[] | null>
   }
   
   // 方法3: 通过 ST_API（如果可用，优先使用）
-  if (typeof (window as any).ST_API !== 'undefined' && 
-      typeof (window as any).ST_API.worldbook?.get === 'function') {
+  const worldbookApi = getWorldbookApi();
+  if (worldbookApi && typeof worldbookApi.get === 'function') {
     try {
-      console.log(`[SillyTavern API] 使用 ST_API.worldbook.get(${worldbookName})`);
-      const book = await (window as any).ST_API.worldbook.get({ name: worldbookName });
-      if (book && book.worldbook && book.worldbook.entries) {
-        return Array.isArray(book.worldbook.entries) 
-          ? book.worldbook.entries 
-          : Object.values(book.worldbook.entries);
+      console.log(`[SillyTavern API] 使用 ST_API.worldBook/worldbook.get(${worldbookName})`);
+      const book = await worldbookApi.get({ name: worldbookName });
+      const worldbook = book?.worldBook ?? book?.worldbook;
+      if (worldbook?.entries) {
+        return Array.isArray(worldbook.entries) 
+          ? worldbook.entries 
+          : Object.values(worldbook.entries);
       }
     } catch (error) {
-      console.warn('[SillyTavern API] ST_API.worldbook.get 失败:', error);
+      console.warn('[SillyTavern API] ST_API.worldBook/worldbook.get 失败:', error);
     }
   }
   
@@ -393,6 +409,7 @@ export async function getWorldbook(worldbookName: string): Promise<any[] | null>
     }
   }
   
+  console.warn(`[SillyTavern API] Failed to get worldbook from SillyTavern: ${worldbookName}`);
   return null;
 }
 
@@ -833,11 +850,11 @@ async function getGlobalWorldbookNames(): Promise<string[]> {
   }
   
   // 方法2: 通过 ST_API（如果可用，优先使用）
-  if (typeof (window as any).ST_API !== 'undefined' && 
-      typeof (window as any).ST_API.worldbook?.list === 'function') {
+  const worldbookApi = getWorldbookApi();
+  if (worldbookApi && typeof worldbookApi.list === 'function') {
     try {
-      console.log('[SillyTavern API] 使用 ST_API.worldbook.list() 获取全局世界书');
-      const result = await (window as any).ST_API.worldbook.list();
+      console.log('[SillyTavern API] 使用 ST_API.worldBook/worldbook.list() 获取全局世界书');
+      const result = await worldbookApi.list();
       // 根据文档，返回格式是 { worldBooks: [...] }
       if (result && Array.isArray(result.worldBooks)) {
         // 提取名称列表（只返回全局世界书）
@@ -849,7 +866,7 @@ async function getGlobalWorldbookNames(): Promise<string[]> {
       // 兼容旧版本：如果直接返回数组
       if (Array.isArray(result)) return result;
     } catch (error) {
-      console.warn('[SillyTavern API] ST_API.worldbook.list 失败:', error);
+      console.warn('[SillyTavern API] ST_API.worldBook/worldbook.list 失败:', error);
     }
   }
   
