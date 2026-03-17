@@ -256,7 +256,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                                             优先使用酒馆 Generate（ST_API）
                                         </label>
                                         <p className="text-xs text-gray-600 mt-1 leading-relaxed">
-                                            仅在嵌入 SillyTavern 且已启用 st-api-wrapper 时生效。开启后会优先走酒馆的生成流程（预设/世界书用酒馆当前默认，我们只改聊天历史）。
+                                            仅在嵌入 SillyTavern 且已启用 st-api-wrapper 时生效。开启后会优先走酒馆的生成流程，同时保留应用侧拼装的系统提示词、自定义预设内容和酒馆当前预设/世界书。
                                         </p>
                                     </div>
                                     <label className="inline-flex items-center gap-2 shrink-0">
@@ -626,4 +626,3 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
         </div>
     );
 };
-

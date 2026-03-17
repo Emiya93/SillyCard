@@ -1044,6 +1044,13 @@ function buildGeminiResponseFromAIText(
         delete parsedResponse.text; // 移除 text 字段，避免混淆
       }
 
+      // 兼容部分模型返回 `response` 而不是 `reply`
+      if (parsedResponse.response && !parsedResponse.reply) {
+        console.log('[characterService] 检测到 `response` 字段，转换为 `reply`');
+        parsedResponse.reply = parsedResponse.response;
+        delete parsedResponse.response;
+      }
+
       // **关键修复1.5**：如果解析后的 JSON 有 `game` 字段但没有 `reply` 字段，将 `game` 转换为 `reply`
       if (parsedResponse.game && !parsedResponse.reply) {
         console.log('[characterService] 检测到 `game` 字段，转换为 `reply`');
@@ -1150,11 +1157,18 @@ function buildGeminiResponseFromAIText(
       replyMatch = aiResponse.match(/reply\s*:\s*["']?([^"'\n}]+)["']?/i);
     }
 
-    // 方法5: 尝试提取 "text" 字段作为 reply
+    // 方法5: 尝试提取 "text" / "response" 字段作为 reply
     if (!replyMatch) {
       replyMatch = aiResponse.match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/);
       if (!replyMatch) {
         replyMatch = aiResponse.match(/"text"\s*:\s*"((?:[^"\\]|\\.|\\n)*)"/);
+      }
+    }
+
+    if (!replyMatch) {
+      replyMatch = aiResponse.match(/"response"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      if (!replyMatch) {
+        replyMatch = aiResponse.match(/"response"\s*:\s*"((?:[^"\\]|\\.|\\n)*)"/);
       }
     }
 
@@ -1817,7 +1831,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
 `;
 
   // 如果用户在设置中开启“优先使用酒馆 Generate”，则强制先走 st-api-wrapper
-  // 约束：不注入 system/extraBlocks/preset/worldBook，仅通过 chatHistory.replace/inject 修改聊天历史
+  // 这里仍然注入完整系统提示词，避免自定义预设内容在酒馆 Generate 路径中丢失。
   if (forceSillyTavernGenerate) {
     try {
       const stChatHistoryReplace = [
@@ -1827,6 +1841,19 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
 
       const stText = await generateTextViaST({
         timeoutMs: 120000,
+        extraBlocks: [
+          {
+            role: 'system',
+            content: systemInstruction,
+            index: 0,
+          }
+        ],
+        preset: {
+          mode: 'current'
+        },
+        worldBook: {
+          mode: 'current'
+        },
         chatHistory: { replace: stChatHistoryReplace },
       });
 

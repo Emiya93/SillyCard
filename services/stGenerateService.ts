@@ -17,6 +17,17 @@ export interface STChatHistoryInjectEntry {
 export interface STGenerateViaChatHistoryInput {
   timeoutMs?: number;
   forceCharacterId?: number;
+  extraBlocks?: Array<{
+    role: STChatRole;
+    content: string;
+    index?: number;
+  }>;
+  preset?: {
+    mode: 'current';
+  };
+  worldBook?: {
+    mode: 'current';
+  };
   chatHistory: {
     replace?: STChatMessage[];
     inject?: STChatHistoryInjectEntry[];
@@ -174,7 +185,7 @@ async function hasSTProxy(timeoutMs: number = 1200): Promise<boolean> {
 /**
  * 使用 st-api-wrapper 的 `ST_API.prompt.generate` 后台生成文本。
  * - 默认 writeToChat=false（只返回文本）
- * - 仅使用 chatHistory.replace/inject
+ * - 支持通过 extraBlocks 注入系统提示词
  */
 export async function generateTextViaST(
   input: STGenerateViaChatHistoryInput
@@ -185,6 +196,9 @@ export async function generateTextViaST(
     stream: false,
     timeoutMs,
     ...(typeof input.forceCharacterId === 'number' ? { forceCharacterId: input.forceCharacterId } : {}),
+    ...(input.extraBlocks ? { extraBlocks: input.extraBlocks } : {}),
+    ...(input.preset ? { preset: input.preset } : {}),
+    ...(input.worldBook ? { worldBook: input.worldBook } : {}),
     chatHistory: input.chatHistory
   };
 
@@ -212,4 +226,3 @@ export async function generateTextViaST(
 
   throw new Error('无法调用 ST_API.prompt.generate：ST_API 不可用或跨域代理未安装');
 }
-
