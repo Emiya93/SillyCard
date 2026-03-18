@@ -166,6 +166,33 @@ export const useDialogue = ({
   // 保存最后一次的操作，用于重新生成
   const lastActionRef = useRef<{ actionText: string; isSystemAction: boolean; userMessageId?: string } | null>(null);
 
+  const advanceGameTimeSnapshot = (time: GameTime, minutes: number): GameTime => {
+    const nextDate = new Date(
+      time.year,
+      time.month - 1,
+      time.day,
+      time.hour,
+      time.minute
+    );
+    nextDate.setMinutes(nextDate.getMinutes() + minutes);
+
+    return {
+      ...time,
+      year: nextDate.getFullYear(),
+      month: nextDate.getMonth() + 1,
+      day: nextDate.getDate(),
+      weekday: nextDate.getDay(),
+      hour: nextDate.getHours(),
+      minute: nextDate.getMinutes(),
+    };
+  };
+
+  const formatTweetTime = (time?: GameTime): string => {
+    if (!time) return "刚刚";
+
+    return `${time.month}月${time.day}日 ${String(time.hour).padStart(2, "0")}:${String(time.minute).padStart(2, "0")}`;
+  };
+
   // 添加记忆到日历
   const addMemory = (
     title: string,
@@ -191,6 +218,17 @@ export const useDialogue = ({
   // 处理用户操作 - 这是核心的对话处理函数
   const handleAction = async (actionText: string, isSystemAction = false) => {
     if (isLoading) return;
+
+    let effectiveGameTime = gameTime ? { ...gameTime } : undefined;
+    const advanceGameClock = (minutes: number) => {
+      if (advance) {
+        advance(minutes);
+      }
+
+      if (effectiveGameTime) {
+        effectiveGameTime = advanceGameTimeSnapshot(effectiveGameTime, minutes);
+      }
+    };
 
     // 保存当前操作，用于重新生成
     lastActionRef.current = { actionText, isSystemAction };
@@ -312,21 +350,21 @@ export const useDialogue = ({
         if (isIndoorMove) {
           // 家中位置转移：2-3分钟（随机）
           const minutes = 2 + Math.floor(Math.random() * 2); // 2-3分钟
-          advance(minutes);
+          advanceGameClock(minutes);
           console.log(`[useDialogue] 家中移动，推进${minutes}分钟`);
         } else if (isOutdoorMove) {
           // 外出：15-40分钟（随机，根据距离调整）
           const minutes = 15 + Math.floor(Math.random() * 26); // 15-40分钟
-          advance(minutes);
+          advanceGameClock(minutes);
           console.log(`[useDialogue] 外出移动，推进${minutes}分钟`);
         } else {
           // 其他移动，默认15分钟
-          advance(15);
+          advanceGameClock(15);
           console.log(`[useDialogue] 一般移动，推进15分钟`);
         }
       } else {
         // 普通对话：1分钟
-        advance(1);
+        advanceGameClock(1);
         console.log(`[useDialogue] 普通对话，推进1分钟`);
       }
     }
@@ -532,7 +570,7 @@ export const useDialogue = ({
                 title: e.title,
                 description: e.description,
               })),
-              gameTime,
+              gameTime: effectiveGameTime ?? gameTime,
               presetContent: settings.presetContent,
               writingStyle: settings.writingStyle,
               perspective: settings.perspective,
@@ -557,7 +595,7 @@ export const useDialogue = ({
             title: e.title,
             description: e.description,
           })),
-          gameTime, // 传递当前游戏时间，让AI知道时间并自主判断位置
+          gameTime: effectiveGameTime ?? gameTime, // 传递当前游戏时间，让AI知道时间并自主判断位置
           presetContent: settings.presetContent, // 传递预设内容
           writingStyle: settings.writingStyle, // 传递描写规范
           perspective: settings.perspective, // 传递人称描写
@@ -566,6 +604,7 @@ export const useDialogue = ({
         },
         {
           useSillyTavernGenerate: settings.useSillyTavernGenerate,
+          debugLoggingEnabled: settings.debugLoggingEnabled,
         }
       );
 
@@ -830,7 +869,7 @@ export const useDialogue = ({
             if (isIndoorLocation) {
               // 家中位置转移：2-3分钟
               const minutes = 2 + Math.floor(Math.random() * 2); // 2-3分钟
-              advance(minutes);
+              advanceGameClock(minutes);
               console.log(`[useDialogue] 家中移动（一起），额外推进${minutes}分钟`);
             } else if (isOutdoorLocation) {
               // 外出：15-40分钟
@@ -839,7 +878,7 @@ export const useDialogue = ({
               const minutes = isNearLocation 
                 ? 15 + Math.floor(Math.random() * 11) // 15-25分钟（近距离）
                 : 25 + Math.floor(Math.random() * 16); // 25-40分钟（远距离）
-              advance(minutes);
+              advanceGameClock(minutes);
               console.log(`[useDialogue] 外出移动（一起），额外推进${minutes}分钟`);
             }
           }
@@ -863,7 +902,7 @@ export const useDialogue = ({
               currentStatus: response.status,
               userLocation,
               todaySummary,
-              gameTime,
+              gameTime: effectiveGameTime ?? gameTime,
               draftTweet: response.generatedTweet,
             },
             phoneAIConfig
@@ -889,7 +928,7 @@ export const useDialogue = ({
           imageDescription: finalGeneratedTweet.imageDescription,
           likes: 0,
           retweets: 0,
-          time: "刚刚",
+          time: formatTweetTime(effectiveGameTime ?? gameTime),
           isPrivate: false,
           comments: 0,
         };

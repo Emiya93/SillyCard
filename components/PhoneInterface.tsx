@@ -214,6 +214,9 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
     // 检测是否为移动端
     const isMobile = isMobileDevice();
+    const statusBarTime = gameTime
+        ? `${String(gameTime.hour).padStart(2, '0')}:${String(gameTime.minute).padStart(2, '0')}`
+        : '09:41';
     
     return (
         <div className={`${isMobile ? 'w-full h-full' : 'w-[380px] shrink-0 h-full'} flex items-center justify-center relative z-20 animate-fade-in delay-200`} style={isMobile ? { 
@@ -238,7 +241,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
                 
                 {/* 状态栏 - 优化样式 */}
                 <div className="absolute top-2 w-full px-6 flex justify-between text-white text-[12px] font-bold z-40 drop-shadow-lg">
-                    <span className="text-white/95">9:41</span>
+                    <span className="text-white/95">{statusBarTime}</span>
                     <div className="flex gap-1.5 items-center">
                         <Activity size={14} className="text-white/90" />
                         <div className="w-6 h-3.5 border border-white/90 rounded-[4px] flex items-center px-[1px] bg-white/10 backdrop-blur-sm">

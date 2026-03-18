@@ -17,6 +17,7 @@ import {
   isSillyTavern as isSillyTavernEnv,
   requestSillyTavernData,
 } from "./sillytavernService";
+import { appendDebugLog } from "./debugLogService";
 import { generateTextViaST, toSTChatMessage } from "./stGenerateService";
 
 /**
@@ -1465,10 +1466,21 @@ export async function generateCharacterResponse(
   },
   options?: {
     useSillyTavernGenerate?: boolean;
+    debugLoggingEnabled?: boolean;
   }
 ): Promise<GeminiResponse> {
   // 使用统一的SillyTavern检测函数
   const isSillyTavern = isSillyTavernEnv();
+  const debugLoggingEnabled = options?.debugLoggingEnabled === true;
+
+  const logDebug = (event: string, data: unknown) => {
+    if (!debugLoggingEnabled) return;
+    appendDebugLog({
+      scope: "characterService",
+      event,
+      data,
+    });
+  };
 
   // API配置检查：检查配置是否有效（非空字符串）
   const hasValidAPIConfig = !!(
@@ -1834,27 +1846,61 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
   // 这里仍然注入完整系统提示词，避免自定义预设内容在酒馆 Generate 路径中丢失。
   if (forceSillyTavernGenerate) {
     try {
+      const stSystemInstruction = await getSystemInstruction(
+        memoryData?.presetContent || undefined,
+        currentStatus.degradation
+      );
+
       const stChatHistoryReplace = [
         ...history.map((h) => toSTChatMessage(h.role, h.content)),
         toSTChatMessage('user', contextPrompt),
       ];
 
-      const stText = await generateTextViaST({
+      logDebug("resolved-system-instruction", {
+        path: "force-sillytavern-generate",
+        systemInstruction: stSystemInstruction,
+      });
+
+      const stGeneratePayload = {
+        writeToChat: false,
+        stream: false,
         timeoutMs: 120000,
         extraBlocks: [
           {
-            role: 'system',
-            content: systemInstruction,
+            role: 'system' as const,
+            content: stSystemInstruction,
             index: 0,
           }
         ],
         preset: {
-          mode: 'current'
+          mode: 'current' as const
         },
         worldBook: {
-          mode: 'current'
+          mode: 'current' as const
         },
         chatHistory: { replace: stChatHistoryReplace },
+      };
+
+      logDebug("request-payload", {
+        path: "force-sillytavern-generate",
+        transport: "ST_API.prompt.generate",
+        payload: stGeneratePayload,
+      });
+
+      const stText = await generateTextViaST({
+        timeoutMs: stGeneratePayload.timeoutMs,
+        extraBlocks: stGeneratePayload.extraBlocks,
+        preset: stGeneratePayload.preset,
+        worldBook: stGeneratePayload.worldBook,
+        chatHistory: stGeneratePayload.chatHistory,
+      });
+
+      logDebug("raw-response", {
+        path: "force-sillytavern-generate",
+        transport: "ST_API.prompt.generate",
+        response: {
+          text: stText,
+        },
       });
 
       // 复用现有解析与状态合并逻辑
@@ -1949,6 +1995,11 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
     { role: "user", content: contextPrompt },
   ];
 
+  logDebug("resolved-system-instruction", {
+    path: "standard-generate",
+    systemInstruction,
+  });
+
   // 估算prompt长度（粗略估算：中文字符数 * 1.5 + 英文单词数 * 1.3）
   const estimatePromptTokens = (text: string): number => {
     const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
@@ -1957,6 +2008,9 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
   };
   
   const totalPromptLength = messages.reduce((sum, msg) => sum + estimatePromptTokens(msg.content), 0);
+  const stChatHistory = messages
+    .filter(msg => msg.role !== 'system')
+    .map(msg => toSTChatMessage(msg.role, msg.content));
   
   // 如果prompt过长，给出警告并尝试优化
   if (totalPromptLength > 10000) {
@@ -2028,16 +2082,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
           
           if (stApi && stApi.prompt?.generate) {
             console.log("[characterService] 成功获取 ST_API 实例，准备调用 generate");
-            // 构建聊天历史（转换为 ST_API 格式）
-            const chatHistory = messages
-              .filter(msg => msg.role !== 'system') // 系统提示词通过 extraBlocks 注入
-              .map(msg => ({
-                role: msg.role,
-                content: msg.content
-              }));
-            
-            // 调用 ST_API.prompt.generate
-            const result = await stApi.prompt.generate({
+            const stGeneratePayload = {
               writeToChat: false, // 后台生成，不写入聊天
               stream: false,
               timeoutMs: 120000, // 2分钟超时
@@ -2050,7 +2095,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
                 }
               ],
               chatHistory: {
-                replace: chatHistory // 替换聊天历史
+                replace: stChatHistory
               },
               preset: {
                 mode: 'current' // 使用当前预设
@@ -2058,6 +2103,21 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
               worldBook: {
                 mode: 'current' // 使用当前世界书
               }
+            };
+
+            logDebug("request-payload", {
+              path: "st-api-generate-direct",
+              transport: "ST_API.prompt.generate",
+              payload: stGeneratePayload,
+            });
+
+            // 调用 ST_API.prompt.generate
+            const result = await stApi.prompt.generate(stGeneratePayload);
+
+            logDebug("raw-response", {
+              path: "st-api-generate-direct",
+              transport: "ST_API.prompt.generate",
+              response: result ?? null,
             });
 
             if (result && result.text) {
@@ -2080,7 +2140,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
             // 如果无法直接访问 ST_API（跨域限制），尝试通过 postMessage 代理调用
             console.log('[characterService] 无法直接访问 ST_API，尝试通过 postMessage 代理调用');
             try {
-              const proxyResult = await requestSTAPIViaPostMessage<{ text?: string }>('prompt.generate', {
+              const stGeneratePayload = {
                 writeToChat: false,
                 stream: false,
                 timeoutMs: 120000,
@@ -2092,12 +2152,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
                   }
                 ],
                 chatHistory: {
-                  replace: messages
-                    .filter(msg => msg.role !== 'system')
-                    .map(msg => ({
-                      role: msg.role,
-                      content: msg.content
-                    }))
+                  replace: stChatHistory
                 },
                 preset: {
                   mode: 'current'
@@ -2105,7 +2160,21 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
                 worldBook: {
                   mode: 'current'
                 }
-              }, 120000);
+              };
+
+              logDebug("request-payload", {
+                path: "st-api-generate-proxy",
+                transport: "postMessage.prompt.generate",
+                payload: stGeneratePayload,
+              });
+
+              const proxyResult = await requestSTAPIViaPostMessage<{ text?: string }>('prompt.generate', stGeneratePayload, 120000);
+
+              logDebug("raw-response", {
+                path: "st-api-generate-proxy",
+                transport: "postMessage.prompt.generate",
+                response: proxyResult ?? null,
+              });
               
               if (proxyResult && proxyResult.text) {
                 const mockResponse = {
@@ -2134,7 +2203,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
         // 即使检测失败，也尝试通过 postMessage 代理调用（可能是跨域限制导致检测失败）
         console.log('[characterService] ST_API 检测失败，尝试通过 postMessage 代理调用');
         try {
-          const proxyResult = await requestSTAPIViaPostMessage<{ text?: string }>('prompt.generate', {
+          const stGeneratePayload = {
             writeToChat: false,
             stream: false,
             timeoutMs: 120000,
@@ -2146,12 +2215,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
               }
             ],
             chatHistory: {
-              replace: messages
-                .filter(msg => msg.role !== 'system')
-                .map(msg => ({
-                  role: msg.role,
-                  content: msg.content
-                }))
+              replace: stChatHistory
             },
             preset: {
               mode: 'current'
@@ -2159,7 +2223,21 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
             worldBook: {
               mode: 'current'
             }
-          }, 120000);
+          };
+
+          logDebug("request-payload", {
+            path: "st-api-generate-proxy-fallback",
+            transport: "postMessage.prompt.generate",
+            payload: stGeneratePayload,
+          });
+
+          const proxyResult = await requestSTAPIViaPostMessage<{ text?: string }>('prompt.generate', stGeneratePayload, 120000);
+
+          logDebug("raw-response", {
+            path: "st-api-generate-proxy-fallback",
+            transport: "postMessage.prompt.generate",
+            response: proxyResult ?? null,
+          });
           
           if (proxyResult && proxyResult.text) {
             const mockResponse = {
@@ -2197,10 +2275,26 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
               break;
             }
           }
-          
-          const generatedText = await tavernHelper.generate({
+
+          const tavernHelperPayload = {
             user_input: userInput,
             should_stream: false,
+          };
+
+          logDebug("request-payload", {
+            path: "tavern-helper-generate",
+            transport: "TavernHelper.generate",
+            payload: tavernHelperPayload,
+          });
+
+          const generatedText = await tavernHelper.generate(tavernHelperPayload);
+
+          logDebug("raw-response", {
+            path: "tavern-helper-generate",
+            transport: "TavernHelper.generate",
+            response: {
+              text: generatedText ?? null,
+            },
           });
 
           if (generatedText) {
@@ -2283,13 +2377,32 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
       console.log(`[characterService] 请求参数: model=${requestBody.model}, max_tokens=${estimatedMaxTokens}, 估算prompt_tokens=${totalPromptLength}`);
       console.log(`[characterService] 请求体摘要: messages数量=${messages.length}, system长度=${systemInstruction.length}`);
 
-      response = await fetch(`${mainAIConfig.apiBase}/chat/completions`, {
+      const requestUrl = `${mainAIConfig.apiBase}/chat/completions`;
+
+      logDebug("request-payload", {
+        path: "chat-completions",
+        transport: "fetch",
+        url: requestUrl,
+        payload: requestBody,
+      });
+
+      response = await fetch(requestUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${mainAIConfig.apiKey}`,
         },
         body: JSON.stringify(requestBody),
+      });
+
+      const rawResponseText = await response.clone().text().catch(() => "");
+      logDebug("raw-response", {
+        path: "chat-completions",
+        transport: "fetch",
+        url: requestUrl,
+        status: response.status,
+        ok: response.ok,
+        responseText: rawResponseText,
       });
     }
 
