@@ -387,7 +387,7 @@ export const useDialogue = ({
       // 如果有旧消息，用总结替代
       if (olderMessages.length > 0) {
         history = [
-          { role: "system", content: `[之前的对话总结] ${todaySummary}` },
+          { role: "system", content: `[之前的对话总结]\n${todaySummary}` },
           ...recentMessages.map((m) => ({
             role: m.sender === "user" ? "user" : "model",
             content: m.text,

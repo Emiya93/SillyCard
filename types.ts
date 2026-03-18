@@ -199,6 +199,7 @@ export interface GameSave {
   tweets: Tweet[]; // 推特记录
   calendarEvents: CalendarEvent[]; // 日历事件
   todaySummary: string; // 今日总结
+  todaySummaries?: string[]; // 今日总结列表
   walletBalance?: number; // 钱包余额
   walletTransactions?: Array<{id: string; name: string; price: number; date: string; type: 'expense' | 'income'}>; // 钱包交易记录
   backpackItems?: BackpackItem[]; // 背包物品

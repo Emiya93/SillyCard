@@ -4,6 +4,23 @@ import { GameSave, GameTime, Message, BodyStatus, LocationID, Tweet, CalendarEve
 const SAVE_STORAGE_KEY = 'wenwan_game_saves';
 const AUTO_SAVE_SLOT = 0; // 自动存档槽位
 
+function normalizeTodaySummaries(save: GameSave): GameSave {
+    const todaySummaries = Array.isArray(save.todaySummaries)
+        ? save.todaySummaries
+            .filter((summary): summary is string => typeof summary === 'string')
+            .map(summary => summary.trim())
+            .filter(summary => summary.length > 0)
+        : (save.todaySummary
+            ? [save.todaySummary.trim()].filter(summary => summary.length > 0)
+            : []);
+
+    return {
+        ...save,
+        todaySummary: todaySummaries.join('\n'),
+        todaySummaries,
+    };
+}
+
 /**
  * 获取所有存档
  */
@@ -37,6 +54,7 @@ export function saveGame(
     tweets: Tweet[],
     calendarEvents: CalendarEvent[],
     todaySummary: string,
+    todaySummaries?: string[],
     customName?: string,
     walletBalance?: number,
     walletTransactions?: Array<{id: string; name: string; price: number; date: string; type: 'expense' | 'income'}>,
@@ -72,6 +90,7 @@ export function saveGame(
             tweets,
             calendarEvents,
             todaySummary,
+            todaySummaries,
             walletBalance,
             walletTransactions,
             backpackItems,
@@ -110,7 +129,7 @@ export function loadGame(slotId: number): GameSave | null {
             }))
         };
         
-        return loadedSave;
+        return normalizeTodaySummaries(loadedSave);
     } catch (error) {
         console.error('读取存档失败:', error);
         return null;
@@ -225,7 +244,7 @@ export function importSave(file: File): Promise<{ success: boolean; save: GameSa
                         }))
                     };
                     
-                    resolve({ success: true, save: importedSave });
+                    resolve({ success: true, save: normalizeTodaySummaries(importedSave) });
                 } catch (parseError) {
                     console.error('解析存档文件失败:', parseError);
                     resolve({ success: false, save: null, error: '存档文件格式不正确' });
@@ -262,12 +281,12 @@ export function saveImportedGame(slotId: number, importedSave: GameSave, customN
             saveName = importedSave.name || `导入存档 ${new Date().toLocaleString('zh-CN')}`;
         }
         
-        const save: GameSave = {
+        const save: GameSave = normalizeTodaySummaries({
             ...importedSave,
             id: slotId,
             name: saveName,
             timestamp: Date.now(), // 更新导入时间为当前时间
-        };
+        });
         
         saves[slotId] = save;
         localStorage.setItem(SAVE_STORAGE_KEY, JSON.stringify(saves));

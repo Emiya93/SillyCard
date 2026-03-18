@@ -1,38 +1,39 @@
 # SillyCard
 
-## What This Project Does
+## 项目简介
 
-SillyCard is a `React 19 + Vite + TypeScript` single-page app with an immersive phone-style roleplay UI.
-From the codebase, the main features are:
+SillyCard 是一个基于 `React 19 + Vite + TypeScript` 构建的单页应用，主打沉浸式手机风格的角色扮演交互界面。
 
-- dialogue and story progression
-- in-app phone screens and generated phone content
-- character status and save/load support
-- optional SillyTavern integration through `ST_API` and `postMessage`
+从当前代码结构来看，主要功能包括：
 
-This repository is a frontend app, not a standalone backend service. Local development mainly depends on Vite, a browser, and an external AI API.
+- 对话与剧情推进
+- 手机内应用界面与生成内容
+- 角色状态管理，以及存档 / 读档支持
+- 通过 `ST_API` 和 `postMessage` 与 SillyTavern 进行可选集成
 
-## Run In VS Code
+这个仓库是前端应用，不是独立后端服务。本地开发主要依赖 Vite、浏览器，以及外部 AI API。
 
-### Prerequisites
+## 在 VS Code 中运行
 
-- Node.js 20+
-- On Windows, use the provided VS Code tasks or `npm.cmd`
+### 前置条件
 
-This workspace has been checked with `Node v22.17.0`.
+- Node.js 20 及以上
+- 在 Windows 上，建议使用仓库内提供的 VS Code 任务，或直接使用 `npm.cmd`
 
-### 1. Install dependencies
+当前工作区已验证可在 `Node v22.17.0` 下运行。
 
-Use either of these:
+### 1. 安装依赖
+
+可以任选以下方式：
 
 - `Terminal -> Run Task -> Install dependencies`
 - `npm.cmd install`
 
-The workspace is configured to prefer `npm.cmd` so PowerShell execution policy does not block `npm.ps1`.
+这个工作区默认优先使用 `npm.cmd`，以避免 PowerShell 执行策略拦截 `npm.ps1`。
 
-### 2. Configure environment variables
+### 2. 配置环境变量
 
-Create `.env.local` from [.env.example](.env.example) and fill at least the main AI settings:
+基于 [.env.example](.env.example) 创建 `.env.local`，至少填写主 AI 配置：
 
 ```env
 VITE_MAIN_AI_API_BASE=https://api.openai.com/v1
@@ -40,52 +41,52 @@ VITE_MAIN_AI_API_KEY=your_key_here
 VITE_MAIN_AI_MODEL=gpt-4o-mini
 ```
 
-Optional variables:
+可选变量：
 
-- `VITE_CONTENT_AI_*` for a separate content-generation model
-- `VITE_OPENAI_*` or `VITE_AI_*` as backward-compatible aliases
-- `GEMINI_API_KEY` only for the legacy `services/geminiService.ts` path
+- `VITE_CONTENT_AI_*`：用于单独配置内容生成模型
+- `VITE_OPENAI_*` 或 `VITE_AI_*`：兼容旧配置名的别名
+- `GEMINI_API_KEY`：仅用于遗留的 `services/geminiService.ts` 路径
 
-`contexts/SettingsContext.tsx` now loads these `VITE_*` values as the app's default settings, so the app can start with prefilled AI config instead of requiring manual input on first run.
+`contexts/SettingsContext.tsx` 会把这些 `VITE_*` 变量作为应用默认设置加载，因此首次启动时可以直接带着预填好的 AI 配置，而不必手动输入。
 
-### 3. Start from VS Code
+### 3. 从 VS Code 启动
 
-The repository now includes:
+仓库内已包含：
 
-- [.vscode/tasks.json](.vscode/tasks.json) for install, dev server, and build tasks
-- [.vscode/launch.json](.vscode/launch.json) for one-click Vite launch and Edge debugging
-- [.vscode/settings.json](.vscode/settings.json) to use Command Prompt in this workspace
+- [.vscode/tasks.json](.vscode/tasks.json)：安装依赖、启动开发服务器、构建任务
+- [.vscode/launch.json](.vscode/launch.json)：一键启动 Vite 并用 Edge 调试
+- [.vscode/settings.json](.vscode/settings.json)：将当前工作区终端默认切换为 Command Prompt
 
-Recommended flow:
+推荐流程：
 
-1. Press `F5`
-2. Choose `Vite: run and debug in Edge`
+1. 按 `F5`
+2. 选择 `Vite: run and debug in Edge`
 
-Or run manually:
+也可以手动执行：
 
 ```bash
 npm.cmd run dev
 ```
 
-Default local URL: [http://localhost:3000](http://localhost:3000)
+默认本地地址：[http://localhost:3000](http://localhost:3000)
 
-## Build
+## 构建
 
 ```bash
 npm.cmd run build
 ```
 
-Running `npm.cmd run build` now prepares a dedicated SillyTavern package in `dist/sillytavern/`:
+执行 `npm.cmd run build` 后，会在 `dist/sillytavern/` 下额外生成一套 SillyTavern 专用产物：
 
-- `dist/sillytavern/wenwan-sillytavern-character-card.json`: embedded frontend character card in the same shape as the provided `温婉.json`
-- `dist/sillytavern/sillytavern-host.html`: the same host HTML extracted as a standalone file
+- `dist/sillytavern/wenwan-sillytavern-character-card.json`：嵌入前端页面的角色卡 JSON，结构与仓库内提供的示例角色卡一致
+- `dist/sillytavern/sillytavern-host.html`：从角色卡中提取出来的独立宿主 HTML 文件
 
-Compatibility notes:
+兼容性说明：
 
-- Only one character card JSON is kept after build: `dist/sillytavern/wenwan-sillytavern-character-card.json`.
-- The generated card launches the embedded frontend through `data.extensions.regex_scripts`, using the same `first_mes = "1"` trigger style as the provided sample card.
-- The embedded page URL is fixed to `http://127.0.0.1:3000/`.
-- This assumes your SillyTavern setup already has the same execution environment as the sample card, such as embedded regex scripts plus your existing renderer/helper setup.
-- If you only need one artifact manually, use `npm.cmd run generate:character-card` or `npm.cmd run generate:sillytavern-host`.
+- 构建后只保留一个角色卡 JSON：`dist/sillytavern/wenwan-sillytavern-character-card.json`
+- 生成的角色卡会通过 `data.extensions.regex_scripts` 启动嵌入式前端，并沿用示例角色卡相同的 `first_mes = "1"` 触发方式
+- 嵌入页面地址固定为 `http://127.0.0.1:3000/`
+- 这意味着你的 SillyTavern 环境需要具备与示例角色卡一致的执行条件，例如嵌入式 regex scripts，以及现有的渲染 / 辅助脚本支持
+- 如果你只想手动生成单个产物，可以使用 `npm.cmd run generate:character-card` 或 `npm.cmd run generate:sillytavern-host`
 
-If you only want to confirm that the UI opens, the app can still start without an API key. AI-driven interactions will fail until a valid API configuration is provided.
+如果你只是想确认 UI 能否正常打开，那么即使没有 API Key，应用依然可以启动；但所有依赖 AI 的交互都需要有效的 API 配置后才能正常工作。

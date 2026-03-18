@@ -14,7 +14,8 @@ import { loadGame, saveGame, shouldAutoSave } from './services/saveService';
 import { clearSystemInstructionCache } from './services/characterService';
 import { selectAIConfig } from './services/aiConfigUtils';
 import { setupSillyTavernEventListeners } from './services/sillytavernApiService';
-import { summarizeCharacterMessages } from './services/summaryService';
+import { appendDebugLog } from './services/debugLogService';
+import { summarizeCharacterMessages, summarizeSummaryEntries } from './services/summaryService';
 import { AppID, BackpackItem, BodyStatus, CalendarEvent, GameTime, LocationID, Message, Tweet } from './types';
 
 // --- Main App Logic ---
@@ -73,7 +74,57 @@ const AppContent: React.FC = () => {
   ]);
 
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]); // New State for Memories
-  const [todaySummary, setTodaySummary] = useState<string>(''); // 今日总结
+  const [todaySummaries, setTodaySummaries] = useState<string[]>([]); // 今日总结列表
+  const todaySummariesRef = useRef<string[]>([]);
+  const todaySummary = todaySummaries.map((summary, index) => `${index + 1}. ${summary}`).join('\n');
+
+  const normalizeTodaySummaries = (summaries?: string[], legacySummary: string = '') => {
+    if (Array.isArray(summaries) && summaries.length > 0) {
+      return summaries
+        .map(summary => summary.trim())
+        .filter(summary => summary.length > 0);
+    }
+
+    return legacySummary
+      ? [legacySummary.trim()].filter(summary => summary.length > 0)
+      : [];
+  };
+
+  const replaceTodaySummaries = (summaries?: string[], legacySummary: string = '') => {
+    const normalizedSummaries = normalizeTodaySummaries(summaries, legacySummary);
+    todaySummariesRef.current = normalizedSummaries;
+    setTodaySummaries(normalizedSummaries);
+  };
+
+  const toLoggableError = (error: unknown) => {
+    if (error instanceof Error) {
+      return {
+        message: error.message,
+        stack: error.stack,
+      };
+    }
+
+    return {
+      message: String(error),
+    };
+  };
+
+  const appendSummaryDebugLog = (event: string, data: Record<string, unknown>) => {
+    if (!settings.debugLoggingEnabled) {
+      return;
+    }
+
+    appendDebugLog({
+      scope: 'summary',
+      event,
+      data,
+    });
+  };
+
+  const getSummaryCheckpoint = (messageList: Message[]) => {
+    const characterCount = messageList.filter(message => message.sender === 'character').length;
+    return Math.floor(characterCount / 5) * 5;
+  };
 
   // 用于保存编辑点的状态快照
   const messageSnapshotsRef = useRef<Map<string, {
@@ -82,7 +133,8 @@ const AppContent: React.FC = () => {
     userLocation: LocationID;
     tweets: Tweet[];
     calendarEvents: CalendarEvent[];
-    todaySummary: string;
+    todaySummaries: string[];
+    summaryCheckpoint: number;
     gameTime: GameTime;
   }>>(new Map());
 
@@ -99,7 +151,8 @@ const AppContent: React.FC = () => {
       userLocation,
       tweets: [...tweets],
       calendarEvents: [...calendarEvents],
-      todaySummary,
+      todaySummaries: [...todaySummariesRef.current],
+      summaryCheckpoint: getSummaryCheckpoint(messages.slice(0, messageIndex + 1)),
       gameTime: { ...gameTime }
     };
     messageSnapshotsRef.current.set(messageId, snapshot);
@@ -247,7 +300,8 @@ const AppContent: React.FC = () => {
           setUserLocation(snapshot.userLocation);
           setTweets(snapshot.tweets);
           setCalendarEvents(snapshot.calendarEvents);
-          setTodaySummary(snapshot.todaySummary);
+          replaceTodaySummaries(snapshot.todaySummaries);
+          lastSummaryMessageCount.current = snapshot.summaryCheckpoint;
           setGameTime(snapshot.gameTime);
 
           // 重新触发AI回复（使用系统操作，不重复添加用户消息）
@@ -491,6 +545,7 @@ const AppContent: React.FC = () => {
       tweets,
       calendarEvents,
       todaySummary,
+      todaySummaries,
       customName,
       walletBalance,
       walletTransactions,
@@ -514,7 +569,8 @@ const AppContent: React.FC = () => {
       setUserLocation(save.userLocation);
       setTweets(save.tweets);
       setCalendarEvents(save.calendarEvents);
-      setTodaySummary(save.todaySummary);
+      replaceTodaySummaries(save.todaySummaries, save.todaySummary);
+      lastSummaryMessageCount.current = getSummaryCheckpoint(save.messages);
 
       // 恢复钱包数据
       if (save.walletBalance !== undefined) {
@@ -726,18 +782,113 @@ const AppContent: React.FC = () => {
 
     // 每5条角色消息生成一次总结
     if (characterMessageCount >= 5 && characterMessageCount % 5 === 0 && characterMessageCount > lastSummaryMessageCount.current) {
+      const existingSummaryCount = todaySummariesRef.current.length;
       lastSummaryMessageCount.current = characterMessageCount;
       const summaryAIConfig = selectAIConfig(settings.contentAI, settings.mainAI);
+      const summaryAIProvider = summaryAIConfig === settings.contentAI ? 'contentAI' : 'mainAI fallback';
       console.log('[App] Generating calendar summary with', summaryAIConfig === settings.contentAI ? 'contentAI' : 'mainAI fallback');
-      summarizeCharacterMessages(messages, summaryAIConfig)
-        .then(summary => {
-          if (summary) {
-            setTodaySummary(summary);
+      console.log(`[App][Summary] 触发摘要生成：角色消息=${characterMessageCount}，当前已有${existingSummaryCount}条summary`);
+      appendSummaryDebugLog('summary-triggered', {
+        characterMessageCount,
+        existingSummaryCount,
+        aiProvider: summaryAIProvider,
+      });
+      let cancelled = false;
+
+      const updateSummaries = async () => {
+        try {
+          const summary = await summarizeCharacterMessages(messages, summaryAIConfig);
+          if (cancelled) {
+            console.log(`[App][Summary] 本次摘要已取消：角色消息=${characterMessageCount}`);
+            appendSummaryDebugLog('summary-cancelled', {
+              characterMessageCount,
+              currentSummaryCount: todaySummariesRef.current.length,
+            });
+            return;
           }
-        })
-        .catch(err => {
+
+          if (!summary) {
+            console.warn(`[App][Summary] 本次摘要生成失败：返回为空，当前仍有${todaySummariesRef.current.length}条summary`);
+            appendSummaryDebugLog('summary-empty', {
+              characterMessageCount,
+              currentSummaryCount: todaySummariesRef.current.length,
+            });
+            return;
+          }
+
+          let nextSummaries = [...todaySummariesRef.current, summary];
+          console.log(`[App][Summary] 本次摘要生成成功：新增后共有${nextSummaries.length}条summary`);
+          appendSummaryDebugLog('summary-generated', {
+            characterMessageCount,
+            currentSummaryCount: nextSummaries.length,
+            latestSummary: summary,
+          });
+
+          if (nextSummaries.length > 20) {
+            console.log(`[App][Summary] summary数量超过20，开始归并前10条。归并前共有${nextSummaries.length}条summary`);
+            appendSummaryDebugLog('summary-merge-started', {
+              characterMessageCount,
+              currentSummaryCount: nextSummaries.length,
+              mergeSourceCount: 10,
+            });
+            const mergedSummary = await summarizeSummaryEntries(nextSummaries.slice(0, 10), summaryAIConfig);
+            if (cancelled) {
+              console.log(`[App][Summary] 前10条归并已取消：角色消息=${characterMessageCount}`);
+              appendSummaryDebugLog('summary-merge-cancelled', {
+                characterMessageCount,
+                currentSummaryCount: nextSummaries.length,
+              });
+              return;
+            }
+
+            if (mergedSummary) {
+              console.log('[App][Summary] 前10条归并成功');
+              appendSummaryDebugLog('summary-merge-generated', {
+                characterMessageCount,
+                mergedSummary,
+              });
+            } else {
+              console.warn('[App][Summary] 前10条归并返回为空，使用本地兜底拼接结果');
+              appendSummaryDebugLog('summary-merge-empty', {
+                characterMessageCount,
+                fallbackUsed: true,
+              });
+            }
+
+            nextSummaries = [
+              mergedSummary || nextSummaries.slice(0, 10).join('；'),
+              ...nextSummaries.slice(10),
+            ];
+
+            console.log(`[App][Summary] 归并完成，当前共有${nextSummaries.length}条summary`);
+            appendSummaryDebugLog('summary-merge-finished', {
+              characterMessageCount,
+              currentSummaryCount: nextSummaries.length,
+            });
+          }
+
+          replaceTodaySummaries(nextSummaries);
+          console.log(`[App][Summary] 摘要列表已更新，当前最终共有${nextSummaries.length}条summary`);
+          appendSummaryDebugLog('summary-updated', {
+            characterMessageCount,
+            finalSummaryCount: nextSummaries.length,
+          });
+        } catch (err) {
+          console.error(`[App][Summary] 本次摘要生成失败：当前已有${todaySummariesRef.current.length}条summary`, err);
+          appendSummaryDebugLog('summary-failed', {
+            characterMessageCount,
+            currentSummaryCount: todaySummariesRef.current.length,
+            error: toLoggableError(err),
+          });
           console.error('生成总结失败:', err);
-        });
+        }
+      };
+
+      updateSummaries();
+
+      return () => {
+        cancelled = true;
+      };
     }
   }, [messages, settings.mainAI, settings.contentAI]);
 

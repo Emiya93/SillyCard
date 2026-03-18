@@ -1372,7 +1372,7 @@ export const CalendarApp: React.FC<AppProps> = ({
                             <Sparkles size={16} className="text-yellow-600"/>
                             <h3 className="font-bold text-gray-900 text-sm">今日总结</h3>
                         </div>
-                        <p className="text-xs text-gray-700 leading-relaxed">{todaySummary}</p>
+                        <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-line">{todaySummary}</p>
                     </div>
                 )}
 
