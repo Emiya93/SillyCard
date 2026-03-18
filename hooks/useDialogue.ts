@@ -1,7 +1,7 @@
 import type React from "react";
 import { useRef, useState } from "react";
 import { useSettings } from "../contexts/SettingsContext";
-import { selectAIConfig } from "../services/aiConfigUtils";
+import { getSecondaryAIConfig, hasValidAIConfig } from "../services/aiConfigUtils";
 import { calculateYellowHairBehaviorStage, decideTodayYellowHair, generateYellowHair, shouldTriggerYellowHair, shouldYellowHairAppearToday } from "../services/arcLightService";
 import { generateCharacterResponse } from "../services/characterService";
 import { appendDebugLog } from "../services/debugLogService";
@@ -163,6 +163,7 @@ export const useDialogue = ({
   const { settings } = useSettings();
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const isHandlingActionRef = useRef(false);
   // 保存最后一次的操作，用于重新生成
   const lastActionRef = useRef<{ actionText: string; isSystemAction: boolean; userMessageId?: string } | null>(null);
 
@@ -217,162 +218,168 @@ export const useDialogue = ({
 
   // 处理用户操作 - 这是核心的对话处理函数
   const handleAction = async (actionText: string, isSystemAction = false) => {
-    if (isLoading) return;
+    const normalizedActionText = isSystemAction ? actionText : actionText.trim();
+    if (!normalizedActionText) return;
+    if (isLoading || isHandlingActionRef.current) return;
+    isHandlingActionRef.current = true;
+    let loadingStarted = false;
 
-    let effectiveGameTime = gameTime ? { ...gameTime } : undefined;
-    const advanceGameClock = (minutes: number) => {
-      if (advance) {
-        advance(minutes);
+    try {
+      let effectiveGameTime = gameTime ? { ...gameTime } : undefined;
+      const advanceGameClock = (minutes: number) => {
+        if (advance) {
+          advance(minutes);
+        }
+
+        if (effectiveGameTime) {
+          effectiveGameTime = advanceGameTimeSnapshot(effectiveGameTime, minutes);
+        }
+      };
+
+      // 保存当前操作，用于重新生成
+      lastActionRef.current = { actionText: normalizedActionText, isSystemAction };
+
+      // 检测购物操作
+      if (normalizedActionText.includes("购买了商品")) {
+        const item = normalizedActionText.split(":")[1]?.trim() || "物品";
+        addMemory("购物", `在商城购买了 ${item}`, "border-orange-400");
       }
 
-      if (effectiveGameTime) {
-        effectiveGameTime = advanceGameTimeSnapshot(effectiveGameTime, minutes);
+      // 如果不是系统操作，添加用户消息
+      let userMessageId: string | undefined;
+      if (!isSystemAction) {
+        userMessageId = Date.now().toString();
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: userMessageId,
+            sender: "user",
+            text: normalizedActionText,
+            timestamp: new Date(),
+          },
+        ]);
+        // 更新最后一次操作记录，包含用户消息ID
+        lastActionRef.current = { actionText: normalizedActionText, isSystemAction, userMessageId };
+      } else {
+        // 系统操作也更新记录
+        lastActionRef.current = { actionText: normalizedActionText, isSystemAction };
       }
-    };
 
-    // 保存当前操作，用于重新生成
-    lastActionRef.current = { actionText, isSystemAction };
+      // 如果不是系统操作，检测用户输入中是否包含使用/赠送物品的意图
+      if (!isSystemAction && backpackItems.length > 0) {
+        const actionLower = normalizedActionText.toLowerCase();
 
-    // 检测购物操作
-    if (actionText.includes("购买了商品")) {
-      const item = actionText.split(":")[1]?.trim() || "物品";
-      addMemory("购物", `在商城购买了 ${item}`, "border-orange-400");
-    }
+        // 检测赠送意图关键词
+        const giftKeywords = ['送', '给你', '送给你', '送你了', '送给你了', '送你', '送给你吧', '送你了'];
+        const isGiftIntent = giftKeywords.some(keyword => actionLower.includes(keyword));
 
-    // 如果不是系统操作，添加用户消息
-    let userMessageId: string | undefined;
-    if (!isSystemAction) {
-      userMessageId = Date.now().toString();
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: userMessageId,
-          sender: "user",
-          text: actionText,
-          timestamp: new Date(),
-        },
-      ]);
-      // 更新最后一次操作记录，包含用户消息ID
-      lastActionRef.current = { actionText, isSystemAction, userMessageId };
-    } else {
-      // 系统操作也更新记录
-      lastActionRef.current = { actionText, isSystemAction };
-    }
+        // 检测使用意图关键词
+        const useKeywords = ['用', '使用', '用那个', '用这个', '用一下', '用吧', '用上', '用起来', '用起来吧'];
+        const isUseIntent = useKeywords.some(keyword => actionLower.includes(keyword));
 
-    // 如果不是系统操作，检测用户输入中是否包含使用/赠送物品的意图
-    if (!isSystemAction && backpackItems.length > 0) {
-      const actionLower = actionText.toLowerCase();
-      
-      // 检测赠送意图关键词
-      const giftKeywords = ['送', '给你', '送给你', '送你了', '送给你了', '送你', '送给你吧', '送你了'];
-      const isGiftIntent = giftKeywords.some(keyword => actionLower.includes(keyword));
-      
-      // 检测使用意图关键词
-      const useKeywords = ['用', '使用', '用那个', '用这个', '用一下', '用吧', '用上', '用起来', '用起来吧'];
-      const isUseIntent = useKeywords.some(keyword => actionLower.includes(keyword));
-      
-      // 如果检测到赠送或使用意图，尝试匹配背包物品
-      if (isGiftIntent || isUseIntent) {
-        // 匹配背包物品名称（支持部分匹配和关键词匹配）
-        const matchedItem = backpackItems.find(item => {
-          const itemNameLower = item.name.toLowerCase();
-          // 完整匹配
-          if (actionLower.includes(itemNameLower)) return true;
-          // 部分匹配：如果物品名称包含多个字，检查是否包含关键部分
-          const itemWords = itemNameLower.split(/[的、，,。.\s]+/).filter(w => w.length > 1);
-          if (itemWords.length > 0) {
-            // 检查是否包含物品名称的关键词
-            const hasKeyWord = itemWords.some(word => actionLower.includes(word));
-            if (hasKeyWord) return true;
-          }
-          // 特殊匹配：运动服、情趣内衣等常见物品的简化名称
-          const simplifiedNames: Record<string, string[]> = {
-            '运动服': ['运动', '运动服'],
-            '黑色情趣内衣': ['情趣', '内衣', '黑色情趣'],
-            '公主裙': ['公主', '公主裙'],
-            '汉服': ['汉服'],
-            '猫咪连体衣': ['猫咪', '连体', '连体衣'],
-            '甜美毛衣': ['甜美', '毛衣'],
-            '魔法少女装': ['魔法', '少女'],
-            '旗袍': ['旗袍'],
-          };
-          const simplified = simplifiedNames[item.name];
-          if (simplified) {
-            return simplified.some(name => actionLower.includes(name));
-          }
-          return false;
-        });
-        
-        if (matchedItem) {
-          // 根据意图调用相应函数（传递 handleAction）
-          if (isGiftIntent) {
-            if (matchedItem.type === 'clothing' && onGiftClothing && matchedItem.outfitId) {
-              // 赠送服装
-              await onGiftClothing(matchedItem.outfitId, matchedItem.id, handleAction);
-              return; // 函数内部会调用 handleAction 生成剧情，这里直接返回
-            } else if (matchedItem.type === 'item' && onGiftItem) {
-              // 赠送物品
-              await onGiftItem(matchedItem.id, matchedItem.name, matchedItem.description, handleAction);
+        // 如果检测到赠送或使用意图，尝试匹配背包物品
+        if (isGiftIntent || isUseIntent) {
+          // 匹配背包物品名称（支持部分匹配和关键词匹配）
+          const matchedItem = backpackItems.find(item => {
+            const itemNameLower = item.name.toLowerCase();
+            // 完整匹配
+            if (actionLower.includes(itemNameLower)) return true;
+            // 部分匹配：如果物品名称包含多个字，检查是否包含关键部分
+            const itemWords = itemNameLower.split(/[的、，,。.\s]+/).filter(w => w.length > 1);
+            if (itemWords.length > 0) {
+              // 检查是否包含物品名称的关键词
+              const hasKeyWord = itemWords.some(word => actionLower.includes(word));
+              if (hasKeyWord) return true;
+            }
+            // 特殊匹配：运动服、情趣内衣等常见物品的简化名称
+            const simplifiedNames: Record<string, string[]> = {
+              '运动服': ['运动', '运动服'],
+              '黑色情趣内衣': ['情趣', '内衣', '黑色情趣'],
+              '公主裙': ['公主', '公主裙'],
+              '汉服': ['汉服'],
+              '猫咪连体衣': ['猫咪', '连体', '连体衣'],
+              '甜美毛衣': ['甜美', '毛衣'],
+              '魔法少女装': ['魔法', '少女'],
+              '旗袍': ['旗袍'],
+            };
+            const simplified = simplifiedNames[item.name];
+            if (simplified) {
+              return simplified.some(name => actionLower.includes(name));
+            }
+            return false;
+          });
+
+          if (matchedItem) {
+            // 根据意图调用相应函数（传递 handleAction）
+            if (isGiftIntent) {
+              if (matchedItem.type === 'clothing' && onGiftClothing && matchedItem.outfitId) {
+                // 赠送服装
+                await onGiftClothing(matchedItem.outfitId, matchedItem.id, handleAction);
+                return; // 函数内部会调用 handleAction 生成剧情，这里直接返回
+              } else if (matchedItem.type === 'item' && onGiftItem) {
+                // 赠送物品
+                await onGiftItem(matchedItem.id, matchedItem.name, matchedItem.description, handleAction);
+                return; // 函数内部会调用 handleAction 生成剧情，这里直接返回
+              }
+            } else if (isUseIntent && matchedItem.type === 'item' && onUseItem) {
+              // 使用物品
+              await onUseItem(matchedItem.id, matchedItem.name, matchedItem.description, handleAction);
               return; // 函数内部会调用 handleAction 生成剧情，这里直接返回
             }
-          } else if (isUseIntent && matchedItem.type === 'item' && onUseItem) {
-            // 使用物品
-            await onUseItem(matchedItem.id, matchedItem.name, matchedItem.description, handleAction);
-            return; // 函数内部会调用 handleAction 生成剧情，这里直接返回
           }
         }
       }
-    }
 
-    setInput("");
-    setIsLoading(true);
-    
-    // 智能时间推进：根据对话内容和动作类型推进不同时间
-    if (!isSystemAction && advance) {
-      // 检测是否为移动操作
-      const actionLower = actionText.toLowerCase();
-      const isLocationMove = actionLower.includes('去') || 
-                            actionLower.includes('前往') || 
-                            actionLower.includes('来到') ||
-                            actionLower.includes('移动') ||
-                            actionLower.includes('到') ||
-                            actionLower.includes('去');
-      
-      // 检测移动类型
-      const isIndoorMove = ['客厅', '卧室', '次卧', '厨房', '厕所', '走廊', '家'].some(keyword => 
-        actionLower.includes(keyword)
-      );
-      const isOutdoorMove = ['电影院', '商城', '游乐园', '学校', '公司', '美食广场', '蛋糕店', '港口', '展会'].some(keyword =>
-        actionLower.includes(keyword)
-      );
-      
-      if (isLocationMove) {
-        if (isIndoorMove) {
-          // 家中位置转移：2-3分钟（随机）
-          const minutes = 2 + Math.floor(Math.random() * 2); // 2-3分钟
-          advanceGameClock(minutes);
-          console.log(`[useDialogue] 家中移动，推进${minutes}分钟`);
-        } else if (isOutdoorMove) {
-          // 外出：15-40分钟（随机，根据距离调整）
-          const minutes = 15 + Math.floor(Math.random() * 26); // 15-40分钟
-          advanceGameClock(minutes);
-          console.log(`[useDialogue] 外出移动，推进${minutes}分钟`);
+      setInput("");
+      setIsLoading(true);
+      loadingStarted = true;
+
+      // 智能时间推进：根据对话内容和动作类型推进不同时间
+      if (!isSystemAction && advance) {
+        // 检测是否为移动操作
+        const actionLower = normalizedActionText.toLowerCase();
+        const isLocationMove = actionLower.includes('去') ||
+                              actionLower.includes('前往') ||
+                              actionLower.includes('来到') ||
+                              actionLower.includes('移动') ||
+                              actionLower.includes('到') ||
+                              actionLower.includes('去');
+
+        // 检测移动类型
+        const isIndoorMove = ['客厅', '卧室', '次卧', '厨房', '厕所', '走廊', '家'].some(keyword =>
+          actionLower.includes(keyword)
+        );
+        const isOutdoorMove = ['电影院', '商城', '游乐园', '学校', '公司', '美食广场', '蛋糕店', '港口', '展会'].some(keyword =>
+          actionLower.includes(keyword)
+        );
+
+        if (isLocationMove) {
+          if (isIndoorMove) {
+            // 家中位置转移：2-3分钟（随机）
+            const minutes = 2 + Math.floor(Math.random() * 2); // 2-3分钟
+            advanceGameClock(minutes);
+            console.log(`[useDialogue] 家中移动，推进${minutes}分钟`);
+          } else if (isOutdoorMove) {
+            // 外出：15-40分钟（随机，根据距离调整）
+            const minutes = 15 + Math.floor(Math.random() * 26); // 15-40分钟
+            advanceGameClock(minutes);
+            console.log(`[useDialogue] 外出移动，推进${minutes}分钟`);
+          } else {
+            // 其他移动，默认15分钟
+            advanceGameClock(15);
+            console.log(`[useDialogue] 一般移动，推进15分钟`);
+          }
         } else {
-          // 其他移动，默认15分钟
-          advanceGameClock(15);
-          console.log(`[useDialogue] 一般移动，推进15分钟`);
+          // 普通对话：1分钟
+          advanceGameClock(1);
+          console.log(`[useDialogue] 普通对话，推进1分钟`);
         }
-      } else {
-        // 普通对话：1分钟
-        advanceGameClock(1);
-        console.log(`[useDialogue] 普通对话，推进1分钟`);
       }
-    }
 
-    // 构建对话历史（优化：使用总结替代旧消息）
-    // 手机端使用更少的历史记录，避免prompt过长
-    const isMobile = isMobileDevice();
-    const historyLimit = isMobile ? 5 : 8; // 手机端5条，电脑端8条
+      // 构建对话历史（优化：使用总结替代旧消息）
+      // 手机端使用更少的历史记录，避免prompt过长
+      const isMobile = isMobileDevice();
+      const historyLimit = isMobile ? 5 : 8; // 手机端5条，电脑端8条
     
     // 筛选非系统消息
     const nonSystemMessages = messages.filter((m) => m.sender !== "system");
@@ -410,9 +417,15 @@ export const useDialogue = ({
         }));
     }
 
-    let promptText = actionText;
+    let promptText = normalizedActionText;
     const isWeChatMessage = actionText.startsWith("(发送微信)");
-    const phoneAIConfig = selectAIConfig(settings.contentAI, settings.mainAI);
+    const phoneAIConfig = getSecondaryAIConfig(
+      settings.useIndependentContentAI,
+      settings.contentAI,
+      settings.mainAI
+    );
+    const shouldUseIndependentContentAI =
+      settings.useIndependentContentAI && hasValidAIConfig(settings.contentAI);
     const selectedAIConfig = isWeChatMessage ? phoneAIConfig : settings.mainAI;
     
     // 精确位置系统：判断是否为远程互动（不能直接找到温婉）
@@ -539,7 +552,9 @@ export const useDialogue = ({
     try {
       // 调试：检查配置
       console.log("[useDialogue] 调用AI前的配置检查:", {
-        apiTarget: isWeChatMessage ? "contentAI" : "mainAI",
+        apiTarget: isWeChatMessage
+          ? (shouldUseIndependentContentAI ? "contentAI" : "mainAI (shared)")
+          : "mainAI",
         apiBase: selectedAIConfig.apiBase,
         hasApiKey: !!selectedAIConfig.apiKey,
         model: selectedAIConfig.model,
@@ -552,12 +567,16 @@ export const useDialogue = ({
           event: "request-context",
           data: {
             actionText,
+            normalizedActionText,
             isSystemAction,
             history,
             enhancedPromptText,
             userLocation,
             isRemoteWeChat,
             selectedAI: {
+              target: isWeChatMessage
+                ? (shouldUseIndependentContentAI ? "contentAI" : "mainAI (shared)")
+                : "mainAI",
               apiBase: selectedAIConfig.apiBase,
               model: selectedAIConfig.model,
               hasApiKey: !!selectedAIConfig.apiKey,
@@ -894,7 +913,7 @@ export const useDialogue = ({
 
       // 处理生成的推特（如果AI生成了推特）
       let finalGeneratedTweet = response.generatedTweet;
-      if (response.generatedTweet && response.generatedTweet.content) {
+      if (shouldUseIndependentContentAI && response.generatedTweet && response.generatedTweet.content) {
         try {
           const phoneTweet = await generateTweetForPhoneApp(
             {
@@ -964,7 +983,7 @@ export const useDialogue = ({
           scope: "useDialogue",
           event: "request-error",
           data: {
-            actionText,
+            actionText: normalizedActionText,
             isSystemAction,
             errorMessage: error?.message || "Unknown error",
           },
@@ -1006,8 +1025,12 @@ export const useDialogue = ({
           retryAction: retryAction,
         },
       ]);
+    }
     } finally {
-      setIsLoading(false);
+      if (loadingStarted) {
+        setIsLoading(false);
+      }
+      isHandlingActionRef.current = false;
     }
   };
 

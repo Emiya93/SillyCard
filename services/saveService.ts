@@ -4,6 +4,18 @@ import { GameSave, GameTime, Message, BodyStatus, LocationID, Tweet, CalendarEve
 const SAVE_STORAGE_KEY = 'wenwan_game_saves';
 const AUTO_SAVE_SLOT = 0; // 自动存档槽位
 
+function getSummaryCheckpoint(save: GameSave): number {
+    if (typeof save.summaryCheckpoint === 'number' && save.summaryCheckpoint >= 0) {
+        return save.summaryCheckpoint;
+    }
+
+    const characterCount = Array.isArray(save.messages)
+        ? save.messages.filter(message => message.sender === 'character').length
+        : 0;
+
+    return Math.floor(characterCount / 5) * 5;
+}
+
 function normalizeTodaySummaries(save: GameSave): GameSave {
     const todaySummaries = Array.isArray(save.todaySummaries)
         ? save.todaySummaries
@@ -18,6 +30,7 @@ function normalizeTodaySummaries(save: GameSave): GameSave {
         ...save,
         todaySummary: todaySummaries.join('\n'),
         todaySummaries,
+        summaryCheckpoint: getSummaryCheckpoint(save),
     };
 }
 
@@ -55,6 +68,7 @@ export function saveGame(
     calendarEvents: CalendarEvent[],
     todaySummary: string,
     todaySummaries?: string[],
+    summaryCheckpoint?: number,
     customName?: string,
     walletBalance?: number,
     walletTransactions?: Array<{id: string; name: string; price: number; date: string; type: 'expense' | 'income'}>,
@@ -91,6 +105,7 @@ export function saveGame(
             calendarEvents,
             todaySummary,
             todaySummaries,
+            summaryCheckpoint,
             walletBalance,
             walletTransactions,
             backpackItems,
@@ -298,4 +313,3 @@ export function saveImportedGame(slotId: number, importedSave: GameSave, customN
         return false;
     }
 }
-

@@ -28,6 +28,28 @@ export const DialogueInterface: React.FC<DialogueInterfaceProps> = ({
     const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
     const [editingText, setEditingText] = useState<string>('');
 
+    const handleSubmitAction = (actionText: string) => {
+        if (!actionText.trim() || isLoading) {
+            return;
+        }
+
+        onAction(actionText);
+    };
+
+    const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || e.repeat) {
+            return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof e.nativeEvent.stopImmediatePropagation === 'function') {
+            e.nativeEvent.stopImmediatePropagation();
+        }
+
+        handleSubmitAction(input);
+    };
+
     // 自动滚动到底部
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -283,13 +305,13 @@ export const DialogueInterface: React.FC<DialogueInterfaceProps> = ({
                             type="text" 
                             value={input} 
                             onChange={(e) => onInputChange(e.target.value)} 
-                            onKeyDown={(e) => e.key === 'Enter' && onAction(input)} 
+                            onKeyDown={handleInputKeyDown}
                             placeholder="和她互动..." 
                             className="flex-1 bg-transparent text-slate-700 placeholder-pink-200 outline-none px-3 sm:px-4 font-medium text-sm sm:text-base" 
                             disabled={isLoading} 
                         />
                         <button 
-                            onClick={() => onAction(input)} 
+                            onClick={() => handleSubmitAction(input)}
                             disabled={!input.trim() || isLoading} 
                             className="p-2.5 sm:p-3 bg-pink-400 text-white rounded-full hover:bg-pink-500 active:bg-pink-600 disabled:bg-pink-200 transition-all active:scale-90 shadow-md shadow-pink-200 touch-manipulation"
                         >
@@ -301,4 +323,3 @@ export const DialogueInterface: React.FC<DialogueInterfaceProps> = ({
         </div>
     );
 };
-

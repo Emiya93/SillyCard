@@ -12,6 +12,7 @@ export type DisplayMode = 'desktop' | 'mobile';
 export interface Settings {
     mainAI: AIConfig;
     contentAI: AIConfig;
+    useIndependentContentAI: boolean;
     useSillyTavernGenerate: boolean;
     debugLoggingEnabled: boolean;
     displayMode: DisplayMode;
@@ -60,6 +61,7 @@ const defaultSettings: Settings = {
         apiKey: defaultContentApiKey,
         model: defaultContentModel
     },
+    useIndependentContentAI: false,
     useSillyTavernGenerate: false,
     debugLoggingEnabled: false,
     displayMode: 'desktop',
@@ -75,6 +77,7 @@ interface SettingsContextType {
     updateSettings: (newSettings: Partial<Settings>) => void;
     updateMainAI: (config: Partial<AIConfig>) => void;
     updateContentAI: (config: Partial<AIConfig>) => void;
+    updateUseIndependentContentAI: (enabled: boolean) => void;
     updateUseSillyTavernGenerate: (enabled: boolean) => void;
     updateDebugLoggingEnabled: (enabled: boolean) => void;
     updateDisplayMode: (mode: DisplayMode) => void;
@@ -104,6 +107,7 @@ const loadSettings = (): Settings => {
                     apiKey: parsed.contentAI?.apiKey || defaultSettings.contentAI.apiKey,
                     model: parsed.contentAI?.model || defaultSettings.contentAI.model
                 },
+                useIndependentContentAI: parsed.useIndependentContentAI ?? defaultSettings.useIndependentContentAI,
                 useSillyTavernGenerate: parsed.useSillyTavernGenerate ?? defaultSettings.useSillyTavernGenerate,
                 debugLoggingEnabled: parsed.debugLoggingEnabled ?? defaultSettings.debugLoggingEnabled,
                 displayMode: parsed.displayMode || defaultSettings.displayMode,
@@ -157,6 +161,13 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
         setSettings(prev => ({
             ...prev,
             contentAI: { ...prev.contentAI, ...config }
+        }));
+    };
+
+    const updateUseIndependentContentAI = (enabled: boolean) => {
+        setSettings(prev => ({
+            ...prev,
+            useIndependentContentAI: enabled
         }));
     };
 
@@ -227,6 +238,7 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
                 updateSettings,
                 updateMainAI,
                 updateContentAI,
+                updateUseIndependentContentAI,
                 updateUseSillyTavernGenerate,
                 updateDebugLoggingEnabled,
                 updateDisplayMode,

@@ -18,3 +18,11 @@ export function hasValidAIConfig(config?: Partial<AIConfigLike> | null): config 
 export function selectAIConfig(primary: AIConfigLike, fallback: AIConfigLike): AIConfigLike {
   return hasValidAIConfig(primary) ? primary : fallback;
 }
+
+export function getSecondaryAIConfig(
+  enabled: boolean,
+  secondary: AIConfigLike,
+  fallback: AIConfigLike
+): AIConfigLike {
+  return enabled ? selectAIConfig(secondary, fallback) : fallback;
+}

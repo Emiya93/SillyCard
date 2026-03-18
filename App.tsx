@@ -12,7 +12,7 @@ import { useGameTime } from './hooks/useGameTime';
 import { useLocation } from './hooks/useLocation';
 import { loadGame, saveGame, shouldAutoSave } from './services/saveService';
 import { clearSystemInstructionCache } from './services/characterService';
-import { selectAIConfig } from './services/aiConfigUtils';
+import { getSecondaryAIConfig } from './services/aiConfigUtils';
 import { setupSillyTavernEventListeners } from './services/sillytavernApiService';
 import { appendDebugLog } from './services/debugLogService';
 import { summarizeCharacterMessages, summarizeSummaryEntries } from './services/summaryService';
@@ -23,6 +23,11 @@ import { AppID, BackpackItem, BodyStatus, CalendarEvent, GameTime, LocationID, M
 // 内部组件，需要使用SettingsContext
 const AppContent: React.FC = () => {
   const { settings } = useSettings();
+  const backgroundAIConfig = getSecondaryAIConfig(
+    settings.useIndependentContentAI,
+    settings.contentAI,
+    settings.mainAI
+  );
   // 手机模式下：null=关闭，'tachie'=显示立绘，AppID.HOME或其他=显示手机
   const [activeApp, setActiveApp] = useState<AppID | null>(AppID.HOME);
   const [gameStarted, setGameStarted] = useState(false);
@@ -78,6 +83,9 @@ const AppContent: React.FC = () => {
   const todaySummariesRef = useRef<string[]>([]);
   const todaySummary = todaySummaries.map((summary, index) => `${index + 1}. ${summary}`).join('\n');
 
+  const getCharacterMessages = (messageList: Message[]) =>
+    messageList.filter(message => message.sender === 'character');
+
   const normalizeTodaySummaries = (summaries?: string[], legacySummary: string = '') => {
     if (Array.isArray(summaries) && summaries.length > 0) {
       return summaries
@@ -122,7 +130,7 @@ const AppContent: React.FC = () => {
   };
 
   const getSummaryCheckpoint = (messageList: Message[]) => {
-    const characterCount = messageList.filter(message => message.sender === 'character').length;
+    const characterCount = getCharacterMessages(messageList).length;
     return Math.floor(characterCount / 5) * 5;
   };
 
@@ -352,6 +360,7 @@ const AppContent: React.FC = () => {
 
   // 用于跟踪上次总结时的消息数量
   const lastSummaryMessageCount = useRef(0);
+  const summaryGenerationTargetRef = useRef<number | null>(null);
 
   // 用于跟踪上次自动存档的时间
   const lastAutoSaveTimeRef = useRef<GameTime | null>(null);
@@ -546,6 +555,7 @@ const AppContent: React.FC = () => {
       calendarEvents,
       todaySummary,
       todaySummaries,
+      lastSummaryMessageCount.current,
       customName,
       walletBalance,
       walletTransactions,
@@ -570,7 +580,8 @@ const AppContent: React.FC = () => {
       setTweets(save.tweets);
       setCalendarEvents(save.calendarEvents);
       replaceTodaySummaries(save.todaySummaries, save.todaySummary);
-      lastSummaryMessageCount.current = getSummaryCheckpoint(save.messages);
+      lastSummaryMessageCount.current = save.summaryCheckpoint ?? getSummaryCheckpoint(save.messages);
+      summaryGenerationTargetRef.current = null;
 
       // 恢复钱包数据
       if (save.walletBalance !== undefined) {
@@ -778,31 +789,54 @@ const AppContent: React.FC = () => {
   // 监听消息变化，生成总结（不再自动推进时间）
   // 时间推进改为在用户发送消息时推进，而不是AI回复后
   useEffect(() => {
-    const characterMessageCount = messages.filter(m => m.sender === 'character').length;
+    const characterMessages = getCharacterMessages(messages);
+    const characterMessageCount = characterMessages.length;
+    const nextSummaryCheckpoint = lastSummaryMessageCount.current + 5;
 
-    // 每5条角色消息生成一次总结
-    if (characterMessageCount >= 5 && characterMessageCount % 5 === 0 && characterMessageCount > lastSummaryMessageCount.current) {
-      const existingSummaryCount = todaySummariesRef.current.length;
-      lastSummaryMessageCount.current = characterMessageCount;
-      const summaryAIConfig = selectAIConfig(settings.contentAI, settings.mainAI);
-      const summaryAIProvider = summaryAIConfig === settings.contentAI ? 'contentAI' : 'mainAI fallback';
-      console.log('[App] Generating calendar summary with', summaryAIConfig === settings.contentAI ? 'contentAI' : 'mainAI fallback');
-      console.log(`[App][Summary] 触发摘要生成：角色消息=${characterMessageCount}，当前已有${existingSummaryCount}条summary`);
-      appendSummaryDebugLog('summary-triggered', {
-        characterMessageCount,
-        existingSummaryCount,
-        aiProvider: summaryAIProvider,
-      });
-      let cancelled = false;
+    if (characterMessageCount < nextSummaryCheckpoint) {
+      return;
+    }
 
-      const updateSummaries = async () => {
-        try {
-          const summary = await summarizeCharacterMessages(messages, summaryAIConfig);
+    if (summaryGenerationTargetRef.current === nextSummaryCheckpoint) {
+      return;
+    }
+
+    const existingSummaryCount = todaySummariesRef.current.length;
+    const summaryAIConfig = settings.useIndependentContentAI
+      ? backgroundAIConfig
+      : { apiBase: '', apiKey: '', model: '' };
+    const summaryAIProvider = settings.useIndependentContentAI
+      ? (summaryAIConfig === settings.contentAI ? 'contentAI' : 'mainAI fallback')
+      : 'local fallback';
+    summaryGenerationTargetRef.current = nextSummaryCheckpoint;
+    console.log('[App] Generating calendar summary with', summaryAIProvider);
+    console.log(`[App][Summary] 触发摘要生成：角色消息=${characterMessageCount}，当前checkpoint=${lastSummaryMessageCount.current}，当前已有${existingSummaryCount}条summary`);
+    appendSummaryDebugLog('summary-triggered', {
+      characterMessageCount,
+      existingSummaryCount,
+      currentCheckpoint: lastSummaryMessageCount.current,
+      targetCheckpoint: nextSummaryCheckpoint,
+      aiProvider: summaryAIProvider,
+    });
+    let cancelled = false;
+
+    const updateSummaries = async () => {
+      let processedCheckpoint = lastSummaryMessageCount.current;
+      let nextSummaries = [...todaySummariesRef.current];
+
+      try {
+        while (characterMessages.length >= processedCheckpoint + 5) {
+          const targetCheckpoint = processedCheckpoint + 5;
+          const summaryBatch = characterMessages.slice(processedCheckpoint, targetCheckpoint);
+          const summary = await summarizeCharacterMessages(summaryBatch, summaryAIConfig);
+
           if (cancelled) {
             console.log(`[App][Summary] 本次摘要已取消：角色消息=${characterMessageCount}`);
             appendSummaryDebugLog('summary-cancelled', {
               characterMessageCount,
               currentSummaryCount: todaySummariesRef.current.length,
+              currentCheckpoint: processedCheckpoint,
+              targetCheckpoint,
             });
             return;
           }
@@ -812,15 +846,19 @@ const AppContent: React.FC = () => {
             appendSummaryDebugLog('summary-empty', {
               characterMessageCount,
               currentSummaryCount: todaySummariesRef.current.length,
+              currentCheckpoint: processedCheckpoint,
+              targetCheckpoint,
             });
             return;
           }
 
-          let nextSummaries = [...todaySummariesRef.current, summary];
-          console.log(`[App][Summary] 本次摘要生成成功：新增后共有${nextSummaries.length}条summary`);
+          processedCheckpoint = targetCheckpoint;
+          nextSummaries = [...nextSummaries, summary];
+          console.log(`[App][Summary] 本次摘要生成成功：checkpoint已推进到${processedCheckpoint}，共有${nextSummaries.length}条summary`);
           appendSummaryDebugLog('summary-generated', {
             characterMessageCount,
             currentSummaryCount: nextSummaries.length,
+            currentCheckpoint: processedCheckpoint,
             latestSummary: summary,
           });
 
@@ -829,14 +867,17 @@ const AppContent: React.FC = () => {
             appendSummaryDebugLog('summary-merge-started', {
               characterMessageCount,
               currentSummaryCount: nextSummaries.length,
+              currentCheckpoint: processedCheckpoint,
               mergeSourceCount: 10,
             });
             const mergedSummary = await summarizeSummaryEntries(nextSummaries.slice(0, 10), summaryAIConfig);
+
             if (cancelled) {
               console.log(`[App][Summary] 前10条归并已取消：角色消息=${characterMessageCount}`);
               appendSummaryDebugLog('summary-merge-cancelled', {
                 characterMessageCount,
                 currentSummaryCount: nextSummaries.length,
+                currentCheckpoint: processedCheckpoint,
               });
               return;
             }
@@ -845,12 +886,14 @@ const AppContent: React.FC = () => {
               console.log('[App][Summary] 前10条归并成功');
               appendSummaryDebugLog('summary-merge-generated', {
                 characterMessageCount,
+                currentCheckpoint: processedCheckpoint,
                 mergedSummary,
               });
             } else {
               console.warn('[App][Summary] 前10条归并返回为空，使用本地兜底拼接结果');
               appendSummaryDebugLog('summary-merge-empty', {
                 characterMessageCount,
+                currentCheckpoint: processedCheckpoint,
                 fallbackUsed: true,
               });
             }
@@ -864,33 +907,46 @@ const AppContent: React.FC = () => {
             appendSummaryDebugLog('summary-merge-finished', {
               characterMessageCount,
               currentSummaryCount: nextSummaries.length,
+              currentCheckpoint: processedCheckpoint,
             });
           }
+        }
 
+        if (processedCheckpoint > lastSummaryMessageCount.current) {
           replaceTodaySummaries(nextSummaries);
-          console.log(`[App][Summary] 摘要列表已更新，当前最终共有${nextSummaries.length}条summary`);
+          lastSummaryMessageCount.current = processedCheckpoint;
+          console.log(`[App][Summary] 摘要列表已更新，当前最终共有${nextSummaries.length}条summary，checkpoint=${processedCheckpoint}`);
           appendSummaryDebugLog('summary-updated', {
             characterMessageCount,
             finalSummaryCount: nextSummaries.length,
+            finalCheckpoint: processedCheckpoint,
           });
-        } catch (err) {
-          console.error(`[App][Summary] 本次摘要生成失败：当前已有${todaySummariesRef.current.length}条summary`, err);
-          appendSummaryDebugLog('summary-failed', {
-            characterMessageCount,
-            currentSummaryCount: todaySummariesRef.current.length,
-            error: toLoggableError(err),
-          });
-          console.error('生成总结失败:', err);
         }
-      };
+      } catch (err) {
+        console.error(`[App][Summary] 本次摘要生成失败：当前已有${todaySummariesRef.current.length}条summary`, err);
+        appendSummaryDebugLog('summary-failed', {
+          characterMessageCount,
+          currentSummaryCount: todaySummariesRef.current.length,
+          currentCheckpoint: processedCheckpoint,
+          error: toLoggableError(err),
+        });
+        console.error('生成总结失败:', err);
+      } finally {
+        if (summaryGenerationTargetRef.current === nextSummaryCheckpoint) {
+          summaryGenerationTargetRef.current = null;
+        }
+      }
+    };
 
-      updateSummaries();
+    updateSummaries();
 
-      return () => {
-        cancelled = true;
-      };
-    }
-  }, [messages, settings.mainAI, settings.contentAI]);
+    return () => {
+      cancelled = true;
+      if (summaryGenerationTargetRef.current === nextSummaryCheckpoint) {
+        summaryGenerationTargetRef.current = null;
+      }
+    };
+  }, [messages, settings.mainAI, settings.contentAI, settings.useIndependentContentAI]);
 
   // 自动存档：每天早上7点自动保存
   useEffect(() => {

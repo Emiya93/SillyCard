@@ -18,7 +18,21 @@ import {
   requestSillyTavernData,
 } from "./sillytavernService";
 import { appendDebugLog } from "./debugLogService";
-import { generateTextViaST, toSTChatMessage } from "./stGenerateService";
+import { generateTextViaST, toSTChatMessage, type STGenerateViaChatHistoryInput } from "./stGenerateService";
+import type { STAPIGenerateInput } from "../types/stApi";
+
+type STWrappedPromptGeneratePayload = Pick<
+  STGenerateViaChatHistoryInput,
+  "timeoutMs" | "extraBlocks" | "preset" | "worldBook" | "chatHistory"
+> & {
+  writeToChat: boolean;
+  stream: boolean;
+};
+
+type STDirectPromptGeneratePayload = Pick<
+  STAPIGenerateInput,
+  "writeToChat" | "stream" | "timeoutMs" | "extraBlocks" | "preset" | "worldBook" | "chatHistory"
+>;
 
 /**
  * 通过 postMessage 调用 ST_API（跨域时使用）
@@ -1861,22 +1875,22 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
         systemInstruction: stSystemInstruction,
       });
 
-      const stGeneratePayload = {
+      const stGeneratePayload: STWrappedPromptGeneratePayload = {
         writeToChat: false,
         stream: false,
         timeoutMs: 120000,
         extraBlocks: [
           {
-            role: 'system' as const,
+            role: 'system',
             content: stSystemInstruction,
             index: 0,
           }
         ],
         preset: {
-          mode: 'current' as const
+          mode: 'current'
         },
         worldBook: {
-          mode: 'current' as const
+          mode: 'current'
         },
         chatHistory: { replace: stChatHistoryReplace },
       };
@@ -1906,14 +1920,10 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
       // 复用现有解析与状态合并逻辑
       return buildGeminiResponseFromAIText(stText, currentStatus, isRemoteWeChat);
     } catch (error: any) {
-      console.warn('[characterService] 强制使用酒馆 Generate 失败，将尝试降级到自定义接口:', error);
-
-      if (!hasValidAPIConfig) {
-        throw new Error(
-          `已开启“优先使用酒馆 Generate（ST_API）”，但无法调用 ST_API.prompt.generate。请确保：1) 已安装并启用 st-api-wrapper；2) 若跨域 iframe，酒馆端已注入 sillytavern-message-handler.js。原始错误: ${error?.message || '未知错误'}`
-        );
-      }
-      // 有自定义 API 配置时，继续走后续逻辑降级到 /chat/completions
+      console.warn('[characterService] 强制使用酒馆 Generate 失败，停止自动降级以避免重复请求:', error);
+      throw new Error(
+        `已开启“优先使用酒馆 Generate（ST_API）”，本次不会再自动回退到直连主API，以避免重复请求。请确保：1) 已安装并启用 st-api-wrapper；2) 若跨域 iframe，酒馆端已注入 sillytavern-message-handler.js；3) 或关闭该开关后改走直连主API。原始错误: ${error?.message || '未知错误'}`
+      );
     }
   }
 
@@ -2008,9 +2018,12 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
   };
   
   const totalPromptLength = messages.reduce((sum, msg) => sum + estimatePromptTokens(msg.content), 0);
-  const stChatHistory = messages
+  const stApiChatHistory = messages
     .filter(msg => msg.role !== 'system')
-    .map(msg => toSTChatMessage(msg.role, msg.content));
+    .map(msg => ({
+      role: msg.role,
+      content: msg.content,
+    }));
   
   // 如果prompt过长，给出警告并尝试优化
   if (totalPromptLength > 10000) {
@@ -2082,7 +2095,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
           
           if (stApi && stApi.prompt?.generate) {
             console.log("[characterService] 成功获取 ST_API 实例，准备调用 generate");
-            const stGeneratePayload = {
+            const stGeneratePayload: STDirectPromptGeneratePayload = {
               writeToChat: false, // 后台生成，不写入聊天
               stream: false,
               timeoutMs: 120000, // 2分钟超时
@@ -2095,7 +2108,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
                 }
               ],
               chatHistory: {
-                replace: stChatHistory
+                replace: stApiChatHistory
               },
               preset: {
                 mode: 'current' // 使用当前预设
@@ -2140,7 +2153,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
             // 如果无法直接访问 ST_API（跨域限制），尝试通过 postMessage 代理调用
             console.log('[characterService] 无法直接访问 ST_API，尝试通过 postMessage 代理调用');
             try {
-              const stGeneratePayload = {
+            const stGeneratePayload: STDirectPromptGeneratePayload = {
                 writeToChat: false,
                 stream: false,
                 timeoutMs: 120000,
@@ -2152,7 +2165,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
                   }
                 ],
                 chatHistory: {
-                  replace: stChatHistory
+                  replace: stApiChatHistory
                 },
                 preset: {
                   mode: 'current'
@@ -2203,7 +2216,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
         // 即使检测失败，也尝试通过 postMessage 代理调用（可能是跨域限制导致检测失败）
         console.log('[characterService] ST_API 检测失败，尝试通过 postMessage 代理调用');
         try {
-          const stGeneratePayload = {
+          const stGeneratePayload: STDirectPromptGeneratePayload = {
             writeToChat: false,
             stream: false,
             timeoutMs: 120000,
@@ -2215,7 +2228,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
               }
             ],
             chatHistory: {
-              replace: stChatHistory
+              replace: stApiChatHistory
             },
             preset: {
               mode: 'current'

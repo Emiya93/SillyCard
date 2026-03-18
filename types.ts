@@ -200,6 +200,7 @@ export interface GameSave {
   calendarEvents: CalendarEvent[]; // 日历事件
   todaySummary: string; // 今日总结
   todaySummaries?: string[]; // 今日总结列表
+  summaryCheckpoint?: number; // 已成功生成摘要的角色消息checkpoint
   walletBalance?: number; // 钱包余额
   walletTransactions?: Array<{id: string; name: string; price: number; date: string; type: 'expense' | 'income'}>; // 钱包交易记录
   backpackItems?: BackpackItem[]; // 背包物品

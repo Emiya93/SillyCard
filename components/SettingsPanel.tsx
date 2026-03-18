@@ -12,7 +12,16 @@ interface SettingsPanelProps {
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToMain }) => {
-    const { settings, updateMainAI, updateContentAI, updateUseSillyTavernGenerate, updateDebugLoggingEnabled, updateDisplayMode, resetSettings } = useSettings();
+    const {
+        settings,
+        updateMainAI,
+        updateContentAI,
+        updateUseIndependentContentAI,
+        updateUseSillyTavernGenerate,
+        updateDebugLoggingEnabled,
+        updateDisplayMode,
+        resetSettings
+    } = useSettings();
     
     // 标签页状态
     const [activeTab, setActiveTab] = useState<'ai' | 'display'>('ai');
@@ -20,6 +29,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
     // 本地状态，用于编辑（使用useEffect同步settings变化）
     const [mainAI, setMainAI] = useState(settings.mainAI);
     const [contentAI, setContentAI] = useState(settings.contentAI);
+    const [useIndependentContentAI, setUseIndependentContentAI] = useState(settings.useIndependentContentAI);
     const [useSillyTavernGenerate, setUseSillyTavernGenerate] = useState(settings.useSillyTavernGenerate);
     const [debugLoggingEnabled, setDebugLoggingEnabled] = useState(settings.debugLoggingEnabled);
     const [displayMode, setDisplayMode] = useState<DisplayMode>(settings.displayMode);
@@ -29,13 +39,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
     React.useEffect(() => {
         setMainAI(settings.mainAI);
         setContentAI(settings.contentAI);
+        setUseIndependentContentAI(settings.useIndependentContentAI);
         setUseSillyTavernGenerate(settings.useSillyTavernGenerate);
         setDebugLoggingEnabled(settings.debugLoggingEnabled);
         setDisplayMode(settings.displayMode);
         setDebugLogCount(getDebugLogCount());
     }, [settings.mainAI.apiBase, settings.mainAI.apiKey, settings.mainAI.model, 
         settings.contentAI.apiBase, settings.contentAI.apiKey, settings.contentAI.model,
-        settings.useSillyTavernGenerate, settings.debugLoggingEnabled, settings.displayMode]);
+        settings.useIndependentContentAI, settings.useSillyTavernGenerate, settings.debugLoggingEnabled, settings.displayMode]);
     
     // 模型列表相关状态
     const [mainModels, setMainModels] = useState<ModelInfo[]>([]);
@@ -125,6 +136,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
         // 更新设置
         updateMainAI(updatedMainAI);
         updateContentAI(updatedContentAI);
+        updateUseIndependentContentAI(useIndependentContentAI);
         updateUseSillyTavernGenerate(useSillyTavernGenerate);
         updateDebugLoggingEnabled(debugLoggingEnabled);
         updateDisplayMode(displayMode);
@@ -135,6 +147,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                 ...settings,
                 mainAI: updatedMainAI,
                 contentAI: updatedContentAI,
+                useIndependentContentAI: useIndependentContentAI,
                 useSillyTavernGenerate: useSillyTavernGenerate,
                 debugLoggingEnabled: debugLoggingEnabled,
                 displayMode: displayMode
@@ -155,6 +168,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
             resetSettings();
             setMainAI(settings.mainAI);
             setContentAI(settings.contentAI);
+            setUseIndependentContentAI(settings.useIndependentContentAI);
             setUseSillyTavernGenerate(settings.useSillyTavernGenerate);
             setDebugLoggingEnabled(settings.debugLoggingEnabled);
         }
@@ -256,7 +270,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                                             优先使用酒馆 Generate（ST_API）
                                         </label>
                                         <p className="text-xs text-gray-600 mt-1 leading-relaxed">
-                                            仅在嵌入 SillyTavern 且已启用 st-api-wrapper 时生效。开启后会优先走酒馆的生成流程，同时保留应用侧拼装的系统提示词、自定义预设内容和酒馆当前预设/世界书。
+                                            仅在嵌入 SillyTavern 且已启用 st-api-wrapper 时生效。开启后会走酒馆的生成流程，同时保留应用侧拼装的系统提示词、自定义预设内容和酒馆当前预设/世界书。若酒馆侧失败，不会再自动补发直连主API，避免同一条消息重复请求。
                                         </p>
                                     </div>
                                     <label className="inline-flex items-center gap-2 shrink-0">
@@ -438,9 +452,26 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                             副AI配置
                             <span className="text-sm font-normal text-pink-600">(控制手机内容生成)</span>
                         </h3>
-                        <p className="text-sm text-pink-700 mb-6">副AI负责生成手机App中的内容（推特、微信、日历等）</p>
+                        <p className="text-sm text-pink-700 mb-4">副AI负责生成手机App中的内容（推特、微信、日历等）</p>
+
+                        <div className="mb-6 rounded-2xl border border-pink-200 bg-white/80 p-4">
+                            <label className="flex items-start justify-between gap-4 cursor-pointer">
+                                <div>
+                                    <div className="text-sm font-semibold text-pink-900">启用独立副AI请求</div>
+                                    <div className="text-xs text-pink-700 mt-1 leading-relaxed">
+                                        关闭时，普通对话只请求主AI；推文润色与摘要改用主流程/本地兜底，避免偷偷再打第二个旧接口。
+                                    </div>
+                                </div>
+                                <input
+                                    type="checkbox"
+                                    checked={useIndependentContentAI}
+                                    onChange={(e) => setUseIndependentContentAI(e.target.checked)}
+                                    className="mt-0.5 h-5 w-5 accent-pink-600"
+                                />
+                            </label>
+                        </div>
                         
-                        <div className="space-y-4">
+                        <div className={`space-y-4 ${useIndependentContentAI ? '' : 'opacity-60'}`}>
                             {/* 接口地址 */}
                             <div>
                                 <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -451,6 +482,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                                     value={contentAI.apiBase}
                                     onChange={(e) => setContentAI({ ...contentAI, apiBase: e.target.value })}
                                     placeholder="https://api.openai.com/v1"
+                                    disabled={!useIndependentContentAI}
                                     className="w-full px-4 py-3 bg-white rounded-xl border border-gray-200 focus:border-pink-400 focus:ring-2 focus:ring-pink-100 outline-none transition-all"
                                 />
                             </div>
@@ -465,6 +497,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                                     value={contentAI.apiKey}
                                     onChange={(e) => setContentAI({ ...contentAI, apiKey: e.target.value })}
                                     placeholder="sk-..."
+                                    disabled={!useIndependentContentAI}
                                     className={`w-full ${isMobile ? 'px-3 py-2.5 text-xs' : 'px-4 py-3 text-sm'} bg-white rounded-xl border border-gray-200 focus:border-pink-400 focus:ring-2 focus:ring-pink-100 outline-none transition-all font-mono`}
                                 />
                             </div>
@@ -478,6 +511,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                                     <select
                                         value={contentAI.model}
                                         onChange={(e) => setContentAI({ ...contentAI, model: e.target.value })}
+                                        disabled={!useIndependentContentAI}
                                         className={`flex-1 ${isMobile ? 'px-3 py-2.5 text-sm' : 'px-4 py-3'} bg-white rounded-xl border border-gray-200 focus:border-pink-400 focus:ring-2 focus:ring-pink-100 outline-none transition-all`}
                                     >
                                         {commonModels.map(model => (
@@ -503,7 +537,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                                     </select>
                                     <button
                                         onClick={handleGetContentModels}
-                                        disabled={loadingContentModels || !contentAI.apiKey || !contentAI.apiBase}
+                                        disabled={!useIndependentContentAI || loadingContentModels || !contentAI.apiKey || !contentAI.apiBase}
                                         className={`${isMobile ? 'px-3 py-2.5 text-xs' : 'px-4 py-3'} bg-pink-500 hover:bg-pink-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-xl font-semibold flex items-center justify-center gap-1.5 transition-all shadow-md hover:shadow-lg active:scale-95`}
                                         title="从API获取可用模型列表"
                                     >
@@ -521,6 +555,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                                         value={contentAI.model}
                                         onChange={(e) => setContentAI({ ...contentAI, model: e.target.value })}
                                         placeholder="输入自定义模型名称"
+                                        disabled={!useIndependentContentAI}
                                         className="w-full mt-2 px-4 py-3 bg-white rounded-xl border border-gray-200 focus:border-pink-400 focus:ring-2 focus:ring-pink-100 outline-none transition-all"
                                     />
                                 )}
