@@ -185,6 +185,10 @@ export const DialogueInterface: React.FC<DialogueInterfaceProps> = ({
                             return null;
                         }
 
+                        if (msg.isHidden) {
+                            return null;
+                        }
+
                         const displayContent = msg.text.replace('(发送微信)', '').replace('(微信)', '');
 
                         return (

@@ -45,6 +45,8 @@ export interface Message {
   timestamp: Date;
   isMind?: boolean; // If true, it's a thought/narration
   isWeChat?: boolean; // If true, this message should only appear in WeChat app, not in main dialogue
+  isSystemAction?: boolean; // Hidden system action that should count as a dialogue round starter
+  isHidden?: boolean; // Internal message kept in history but hidden from the main dialogue UI
   isRetryable?: boolean; // If true, this message can be retried
   retryAction?: () => void; // Function to retry the action
 }

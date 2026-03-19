@@ -8,7 +8,7 @@ export interface DialogueRound {
 }
 
 function isDialogueMessage(message: Message): boolean {
-    return message.sender === 'user' || message.sender === 'character';
+    return message.sender === 'user' || message.sender === 'character' || message.isSystemAction === true;
 }
 
 export function buildDialogueRounds(messages: Message[]): DialogueRound[] {
@@ -23,7 +23,7 @@ export function buildDialogueRounds(messages: Message[]): DialogueRound[] {
             continue;
         }
 
-        if (message.sender === 'user')
+        if (message.sender === 'user' || message.isSystemAction)
         {
             pendingUserMessage = message;
             continue;

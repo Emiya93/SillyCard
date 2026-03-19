@@ -1,19 +1,31 @@
 // 存档服务 - 负责游戏的保存和读取功能
 import { GameSave, GameTime, Message, BodyStatus, LocationID, Tweet, CalendarEvent, BackpackItem, SummaryEntry } from '../types';
-import { getSummaryCheckpoint as getDialogueSummaryCheckpoint } from './dialogueSummaryUtils';
+import { getSummaryCheckpoint as getDialogueSummaryCheckpoint, SUMMARY_BATCH_SIZE } from './dialogueSummaryUtils';
 
 const SAVE_STORAGE_KEY = 'wenwan_game_saves';
 const AUTO_SAVE_SLOT = 0; // 自动存档槽位
 
 function getSummaryCheckpoint(save: GameSave): number {
-    if (typeof save.summaryCheckpoint === 'number' && save.summaryCheckpoint >= 0)
-    {
-        return save.summaryCheckpoint;
-    }
-
-    return Array.isArray(save.messages)
+    const inferredCheckpoint = normalizeSummaryEntries(save).length * SUMMARY_BATCH_SIZE;
+    const maxCheckpoint = Array.isArray(save.messages)
         ? getDialogueSummaryCheckpoint(save.messages)
         : 0;
+    const normalizedInferredCheckpoint = Math.min(inferredCheckpoint, maxCheckpoint);
+
+    if (typeof save.summaryCheckpoint === 'number' && save.summaryCheckpoint >= 0)
+    {
+        if (normalizedInferredCheckpoint === 0)
+        {
+            return 0;
+        }
+
+        return Math.max(
+            normalizedInferredCheckpoint,
+            Math.min(save.summaryCheckpoint, maxCheckpoint)
+        );
+    }
+
+    return normalizedInferredCheckpoint;
 }
 
 function normalizeSummaryEntries(save: GameSave): SummaryEntry[] {

@@ -18,6 +18,7 @@ import { setupSillyTavernEventListeners } from './services/sillytavernApiService
 import { appendDebugLog } from './services/debugLogService';
 import { summarizeBigSummaryEntries, summarizeDialogueRounds } from './services/summaryService';
 import { AppID, BackpackItem, BodyStatus, CalendarEvent, GameTime, LocationID, Message, SummaryEntry, Tweet } from './types';
+import { syncDailyGainState } from './utils/bodyStatusUtils';
 
 // --- Main App Logic ---
 
@@ -727,7 +728,7 @@ const AppContent: React.FC = () => {
       setCalendarEvents(save.calendarEvents);
       replaceTodaySummaries(save.todaySummaries, save.todaySummary);
       replaceBigSummaries(save.bigSummaries);
-      lastSummaryMessageCount.current = save.summaryCheckpoint ?? getSummaryCheckpoint(save.messages);
+      lastSummaryMessageCount.current = save.summaryCheckpoint ?? 0;
       lastBigSummaryCheckpoint.current = save.bigSummaryCheckpoint ?? 0;
       summaryGenerationTargetRef.current = null;
 
@@ -823,7 +824,8 @@ const AppContent: React.FC = () => {
     setUserLocation,
     handleAction,
     addMemory,
-    advance // 传递时间推进函数
+    advance, // 传递时间推进函数
+    gameTime,
   });
 
   const previousTimeRef = useRef<GameTime>(gameTime);
@@ -946,8 +948,9 @@ const AppContent: React.FC = () => {
 
   // 不再需要监听时间变化生成剧情，因为现在直接使用 handleAction 生成
   useEffect(() => {
+    setBodyStatus((prev) => syncDailyGainState(prev, gameTime));
     previousTimeRef.current = gameTime;
-  }, [gameTime.year, gameTime.month, gameTime.day]);
+  }, [gameTime.year, gameTime.month, gameTime.day, setBodyStatus]);
 
   // 监听消息变化，生成总结（不再自动推进时间）
   // 时间推进改为在用户发送消息时推进，而不是AI回复后
@@ -955,6 +958,8 @@ const AppContent: React.FC = () => {
     const dialogueRounds = buildDialogueRounds(messages);
     const dialogueRoundCount = dialogueRounds.length;
     const nextSummaryCheckpoint = lastSummaryMessageCount.current + SUMMARY_BATCH_SIZE;
+    const summaryBodyStatus = bodyStatus;
+    const summaryGameTime = gameTime;
 
     if (dialogueRoundCount < nextSummaryCheckpoint)
     {
@@ -995,9 +1000,9 @@ const AppContent: React.FC = () => {
       {
         while (dialogueRounds.length >= processedCheckpoint + SUMMARY_BATCH_SIZE)
         {
-          const targetCheckpoint = dialogueRounds.length;
+          const targetCheckpoint = processedCheckpoint + SUMMARY_BATCH_SIZE;
           const summaryBatch = dialogueRounds.slice(processedCheckpoint, targetCheckpoint);
-          const summary = await summarizeDialogueRounds(summaryBatch, summaryAIConfig, bodyStatus);
+          const summary = await summarizeDialogueRounds(summaryBatch, summaryAIConfig, summaryBodyStatus);
 
           if (cancelled)
           {
@@ -1031,7 +1036,7 @@ const AppContent: React.FC = () => {
             ...nextSummaries,
             {
               content: summary,
-              gameTime: cloneGameTime(gameTime),
+              gameTime: cloneGameTime(summaryGameTime),
             },
           ];
           console.log(`[App][Summary] 本次摘要生成成功：checkpoint已推进到${processedCheckpoint}，共有${nextSummaries.length}条summary`);
@@ -1064,7 +1069,7 @@ const AppContent: React.FC = () => {
               targetBigSummaryCheckpoint,
             });
 
-            const bigSummary = await summarizeBigSummaryEntries(bigSummaryBatch, summaryAIConfig, bodyStatus);
+            const bigSummary = await summarizeBigSummaryEntries(bigSummaryBatch, summaryAIConfig, summaryBodyStatus);
 
             if (cancelled)
             {
@@ -1164,7 +1169,7 @@ const AppContent: React.FC = () => {
         summaryGenerationTargetRef.current = null;
       }
     };
-  }, [backgroundAIConfig, bodyStatus, gameTime, messages, settings.contentAI, settings.mainAI, settings.useIndependentContentAI]);
+  }, [backgroundAIConfig, messages, settings.contentAI, settings.mainAI, settings.useIndependentContentAI]);
 
   useEffect(() => {
     return () => {

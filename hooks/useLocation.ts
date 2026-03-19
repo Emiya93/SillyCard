@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from 'react';
-import { LocationID } from '../types';
+import { GameTime, LocationID } from '../types';
 
 // 位置移动 Hook - 负责处理玩家位置移动相关的逻辑
 // 包括判断移动类型、计算时间消耗、生成移动描述等
@@ -7,8 +7,9 @@ interface UseLocationProps {
     userLocation: LocationID;
     setUserLocation: Dispatch<SetStateAction<LocationID>>;
     handleAction: (actionText: string, isSystemAction?: boolean) => Promise<void>;
-    addMemory: (title: string, description: string, color?: string) => void;
+    addMemory: (title: string, description: string, color?: string, eventTime?: GameTime) => void;
     advance?: (minutes: number) => void; // 时间推进函数（可选）
+    gameTime?: GameTime;
 }
 
 export const useLocation = ({
@@ -16,8 +17,30 @@ export const useLocation = ({
     setUserLocation,
     handleAction,
     addMemory,
-    advance
+    advance,
+    gameTime
 }: UseLocationProps) => {
+    const advanceGameTimeSnapshot = (time: GameTime, minutes: number): GameTime => {
+        const nextDate = new Date(
+            time.year,
+            time.month - 1,
+            time.day,
+            time.hour,
+            time.minute
+        );
+        nextDate.setMinutes(nextDate.getMinutes() + minutes);
+
+        return {
+            ...time,
+            year: nextDate.getFullYear(),
+            month: nextDate.getMonth() + 1,
+            day: nextDate.getDate(),
+            weekday: nextDate.getDay(),
+            hour: nextDate.getHours(),
+            minute: nextDate.getMinutes(),
+        };
+    };
+
     // 处理玩家位置移动
     const handleMoveUser = async (
         location: LocationID, 
@@ -83,7 +106,8 @@ export const useLocation = ({
             addMemory(
                 `在${facilityName}`, 
                 withSister ? '和温婉一起度过了难忘的时光。' : '独自一人的体验。',
-                withSister ? 'border-pink-400' : 'border-blue-400'
+                withSister ? 'border-pink-400' : 'border-blue-400',
+                gameTime ? advanceGameTimeSnapshot(gameTime, timeCost) : undefined
             );
         }
 
@@ -113,5 +137,3 @@ export const useLocation = ({
         handleMoveUser
     };
 };
-
-

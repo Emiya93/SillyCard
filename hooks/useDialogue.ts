@@ -8,6 +8,11 @@ import { generateCharacterResponse } from "../services/characterService";
 import { appendDebugLog } from "../services/debugLogService";
 import { generateTweetForPhoneApp } from "../services/phoneContentService";
 import {
+  DAILY_DEGRADATION_GAIN_LIMIT,
+  DAILY_FAVORABILITY_GAIN_LIMIT,
+  syncDailyGainState,
+} from "../utils/bodyStatusUtils";
+import {
   BackpackItem,
   BodyStatus,
   CalendarEvent,
@@ -196,7 +201,7 @@ export const useDialogue = ({
   const [isLoading, setIsLoading] = useState(false);
   const isHandlingActionRef = useRef(false);
   // 保存最后一次的操作，用于重新生成
-  const lastActionRef = useRef<{ actionText: string; isSystemAction: boolean; userMessageId?: string } | null>(null);
+  const lastActionRef = useRef<{ actionText: string; isSystemAction: boolean; actionMessageId?: string } | null>(null);
 
   const advanceGameTimeSnapshot = (time: GameTime, minutes: number): GameTime => {
     const nextDate = new Date(
@@ -229,12 +234,13 @@ export const useDialogue = ({
   const addMemory = (
     title: string,
     description: string,
-    color: string = "border-blue-400"
+    color: string = "border-blue-400",
+    eventTime?: GameTime,
   ) => {
-    const timeStr = new Date().toLocaleTimeString("zh-CN", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const resolvedTime = eventTime ?? gameTime;
+    const timeStr = resolvedTime
+      ? `${String(resolvedTime.hour).padStart(2, "0")}:${String(resolvedTime.minute).padStart(2, "0")}`
+      : "--:--";
     setCalendarEvents((prev) => [
       {
         id: Date.now().toString(),
@@ -277,29 +283,41 @@ export const useDialogue = ({
       if (normalizedActionText.includes("购买了商品"))
       {
         const item = normalizedActionText.split(":")[1]?.trim() || "物品";
-        addMemory("购物", `在商城购买了 ${item}`, "border-orange-400");
+        addMemory("购物", `在商城购买了 ${item}`, "border-orange-400", effectiveGameTime ?? gameTime);
       }
 
       // 如果不是系统操作，添加用户消息
-      let userMessageId: string | undefined;
+      let actionMessageId: string | undefined;
       if (!isSystemAction)
       {
-        userMessageId = Date.now().toString();
+        actionMessageId = Date.now().toString();
         setMessages((prev) => [
           ...prev,
           {
-            id: userMessageId,
+            id: actionMessageId,
             sender: "user",
             text: normalizedActionText,
             timestamp: new Date(),
           },
         ]);
         // 更新最后一次操作记录，包含用户消息ID
-        lastActionRef.current = { actionText: normalizedActionText, isSystemAction, userMessageId };
+        lastActionRef.current = { actionText: normalizedActionText, isSystemAction, actionMessageId };
       } else
       {
         // 系统操作也更新记录
-        lastActionRef.current = { actionText: normalizedActionText, isSystemAction };
+        actionMessageId = Date.now().toString();
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: actionMessageId,
+            sender: "system",
+            text: normalizedActionText,
+            timestamp: new Date(),
+            isSystemAction: true,
+            isHidden: true,
+          },
+        ]);
+        lastActionRef.current = { actionText: normalizedActionText, isSystemAction, actionMessageId };
       }
 
       // 如果不是系统操作，检测用户输入中是否包含使用/赠送物品的意图
@@ -429,7 +447,7 @@ export const useDialogue = ({
       }
 
       // 构建对话历史：当前未总结的所有对话 + 最近50条小总结 + 所有大总结
-      const nonSystemMessages = messages.filter((m) => m.sender !== "system");
+      const nonSystemMessages = messages.filter((m) => m.sender !== "system" || m.isSystemAction);
       const dialogueRounds = buildDialogueRounds(nonSystemMessages);
       const summarizedRounds = dialogueRounds.slice(0, summaryCheckpoint);
       const summarizedMessageIds = new Set<string>();
@@ -470,7 +488,7 @@ export const useDialogue = ({
 
       history.push(
         ...unsummarizedMessages.map((m) => ({
-          role: m.sender === "user" ? "user" : "model",
+          role: m.sender === "character" ? "model" : "user",
           content: m.text,
         }))
       );
@@ -536,9 +554,10 @@ export const useDialogue = ({
       const forcedYellowHairName = triggeredYellowHair?.name
         || triggeredSecondYellowHair?.name
         || getForcedYellowHairName(promptText);
+      const normalizedBodyStatus = syncDailyGainState(bodyStatus, effectiveGameTime ?? gameTime);
       const previewBodyStatus = triggeredYellowHair
         ? {
-          ...bodyStatus,
+          ...normalizedBodyStatus,
           yellowHair1: {
             name: triggeredYellowHair.name,
             type: triggeredYellowHair.type,
@@ -548,7 +567,7 @@ export const useDialogue = ({
         }
         : triggeredSecondYellowHair
           ? {
-            ...bodyStatus,
+            ...normalizedBodyStatus,
             yellowHair2: {
               name: triggeredSecondYellowHair.name,
               type: triggeredSecondYellowHair.type,
@@ -556,7 +575,7 @@ export const useDialogue = ({
               firstMetDate: `${gameTime!.year}-${String(gameTime!.month).padStart(2, '0')}-${String(gameTime!.day).padStart(2, '0')}`
             }
           }
-          : bodyStatus;
+          : normalizedBodyStatus;
       // 调用AI时使用预览状态，确保黄毛首登场/第二黄毛登场这回合的上下文一致，
       // 避免AI基于旧状态把新写入的 yellowHair 字段覆盖回 null。
       const statusWithContext = {
@@ -573,7 +592,7 @@ export const useDialogue = ({
             return prev;
           }
 
-          const newStatus = { ...prev };
+          const newStatus = { ...syncDailyGainState(prev, effectiveGameTime ?? gameTime) };
           newStatus.yellowHair1 = {
             name: triggeredYellowHair.name,
             type: triggeredYellowHair.type,
@@ -593,8 +612,9 @@ export const useDialogue = ({
             return prev;
           }
 
+          const normalizedPrev = syncDailyGainState(prev, effectiveGameTime ?? gameTime);
           return {
-            ...prev,
+            ...normalizedPrev,
             yellowHair2: {
               name: triggeredSecondYellowHair.name,
               type: triggeredSecondYellowHair.type,
@@ -889,13 +909,14 @@ export const useDialogue = ({
         // 更新身体状态（合并更新，确保不会丢失字段）
         // 远程微信消息时，不应该更新位置（用户和温婉不在同一位置）
         setBodyStatus((prev) => {
+          const baseStatus = syncDailyGainState(prev, effectiveGameTime ?? gameTime);
           // 调试日志：记录接收到的状态
           console.log("[useDialogue] 准备更新状态:", {
-            当前好感度: prev.favorability,
+            当前好感度: baseStatus.favorability,
             AI返回的好感度: response.status.favorability,
-            当前情绪: prev.emotion,
+            当前情绪: baseStatus.emotion,
             AI返回的情绪: response.status.emotion,
-            当前服装: prev.overallClothing,
+            当前服装: baseStatus.overallClothing,
             AI返回的服装: response.status.overallClothing,
             完整状态: response.status
           });
@@ -903,12 +924,12 @@ export const useDialogue = ({
           // 如果是远程微信消息，保持位置不变
           if (isRemoteWeChat && response.status.location)
           {
-            response.status.location = prev.location;
+            response.status.location = baseStatus.location;
           }
 
           // 计算好感度和堕落度的变化
-          const favorabilityChange = response.status.favorability - prev.favorability;
-          const degradationChange = response.status.degradation - prev.degradation;
+          const favorabilityChange = response.status.favorability - baseStatus.favorability;
+          const degradationChange = response.status.degradation - baseStatus.degradation;
 
           // 检查是否发生了NTR事件（堕落度增长）
           const isNTREvent = degradationChange > 0;
@@ -916,43 +937,49 @@ export const useDialogue = ({
           // 检查每日增长上限（只限制增长，不限制降低）
           let finalFavorability = response.status.favorability;
           let finalDegradation = response.status.degradation;
-          let updatedFavorabilityGain = prev.todayFavorabilityGain || 0;
-          let updatedDegradationGain = prev.todayDegradationGain || 0;
+          let updatedFavorabilityGain = baseStatus.todayFavorabilityGain || 0;
+          let updatedDegradationGain = baseStatus.todayDegradationGain || 0;
 
           // 好感度增长上限检查（只限制增长，不限制降低）
           if (favorabilityChange > 0)
           {
-            const remainingFavorabilityQuota = 5 - (prev.todayFavorabilityGain || 0);
+            const remainingFavorabilityQuota = Math.max(
+              0,
+              DAILY_FAVORABILITY_GAIN_LIMIT - (baseStatus.todayFavorabilityGain || 0),
+            );
             if (favorabilityChange > remainingFavorabilityQuota)
             {
               // 超过每日上限，只增长剩余额度
-              finalFavorability = prev.favorability + remainingFavorabilityQuota;
-              updatedFavorabilityGain = 5;
+              finalFavorability = baseStatus.favorability + remainingFavorabilityQuota;
+              updatedFavorabilityGain = DAILY_FAVORABILITY_GAIN_LIMIT;
               console.log(`[useDialogue] 好感度增长超过每日上限，已限制: 尝试增长${favorabilityChange}，实际增长${remainingFavorabilityQuota}`);
             } else
             {
-              updatedFavorabilityGain = (prev.todayFavorabilityGain || 0) + favorabilityChange;
+              updatedFavorabilityGain = (baseStatus.todayFavorabilityGain || 0) + favorabilityChange;
             }
           }
 
           // 堕落度增长上限检查（只限制增长，不限制降低）
           if (degradationChange > 0)
           {
-            const remainingDegradationQuota = 5 - (prev.todayDegradationGain || 0);
+            const remainingDegradationQuota = Math.max(
+              0,
+              DAILY_DEGRADATION_GAIN_LIMIT - (baseStatus.todayDegradationGain || 0),
+            );
             if (degradationChange > remainingDegradationQuota)
             {
               // 超过每日上限，只增长剩余额度
-              finalDegradation = prev.degradation + remainingDegradationQuota;
-              updatedDegradationGain = 5;
+              finalDegradation = baseStatus.degradation + remainingDegradationQuota;
+              updatedDegradationGain = DAILY_DEGRADATION_GAIN_LIMIT;
               console.log(`[useDialogue] 堕落度增长超过每日上限，已限制: 尝试增长${degradationChange}，实际增长${remainingDegradationQuota}`);
             } else
             {
-              updatedDegradationGain = (prev.todayDegradationGain || 0) + degradationChange;
+              updatedDegradationGain = (baseStatus.todayDegradationGain || 0) + degradationChange;
             }
           }
 
           const newStatus = {
-            ...prev,
+            ...baseStatus,
             ...response.status,
             // 应用每日上限限制后的值
             favorability: finalFavorability,
@@ -961,15 +988,15 @@ export const useDialogue = ({
             todayFavorabilityGain: updatedFavorabilityGain,
             todayDegradationGain: updatedDegradationGain,
             // 确保嵌套对象也被正确合并
-            mouth: { ...prev.mouth, ...(response.status.mouth || {}) },
-            chest: { ...prev.chest, ...(response.status.chest || {}) },
-            nipples: { ...prev.nipples, ...(response.status.nipples || {}) },
-            groin: { ...prev.groin, ...(response.status.groin || {}) },
+            mouth: { ...baseStatus.mouth, ...(response.status.mouth || {}) },
+            chest: { ...baseStatus.chest, ...(response.status.chest || {}) },
+            nipples: { ...baseStatus.nipples, ...(response.status.nipples || {}) },
+            groin: { ...baseStatus.groin, ...(response.status.groin || {}) },
             posterior: {
-              ...prev.posterior,
+              ...baseStatus.posterior,
               ...(response.status.posterior || {}),
             },
-            feet: { ...prev.feet, ...(response.status.feet || {}) },
+            feet: { ...baseStatus.feet, ...(response.status.feet || {}) },
           };
 
           // 调试日志：记录状态更新
@@ -1132,7 +1159,8 @@ export const useDialogue = ({
           addMemory(
             "新推特",
             `温婉发布了一条新动态: "${contentPreview}"`,
-            "border-pink-300"
+            "border-pink-300",
+            effectiveGameTime ?? gameTime,
           );
         }
 
@@ -1179,8 +1207,8 @@ export const useDialogue = ({
                 {
                   return false;
                 }
-                // 如果是重新生成，移除上一次的用户消息（避免重复）
-                if (lastActionRef.current?.userMessageId && msg.id === lastActionRef.current.userMessageId)
+                // 如果是重新生成，移除上一次动作对应的消息（避免重复）
+                if (lastActionRef.current?.actionMessageId && msg.id === lastActionRef.current.actionMessageId)
                 {
                   return false;
                 }

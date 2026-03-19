@@ -37,20 +37,16 @@ export interface STGenerateViaChatHistoryInput {
 function normalizeRole(role: string): STChatRole {
   if (role === 'assistant') return 'model';
   if (role === 'user' || role === 'model' || role === 'system') return role;
-  // 未知角色统一当作 user，避免直接抛错导致流程中断
   return 'user';
 }
 
 export function toSTChatMessage(role: string, content: string): STChatMessage {
   return {
     role: normalizeRole(role),
-    parts: [{ text: content }]
+    parts: [{ text: content }],
   };
 }
 
-/**
- * 尝试获取可直接访问的 ST_API（同域/可访问 top/parent 时有效）
- */
 function getAccessibleSTAPI(): any | null {
   if (typeof window === 'undefined') return null;
 
@@ -59,16 +55,14 @@ function getAccessibleSTAPI(): any | null {
       const api = win?.ST_API;
       if (api?.prompt && typeof api.prompt.generate === 'function') return api;
     } catch {
-      // 跨域访问失败
+      // ignore cross-origin access failures
     }
     return null;
   };
 
-  // 当前窗口
   const local = tryGet(window as any);
   if (local) return local;
 
-  // top
   try {
     if (window.top && window.top !== window) {
       const topApi = tryGet(window.top as any);
@@ -78,13 +72,12 @@ function getAccessibleSTAPI(): any | null {
     // ignore
   }
 
-  // parent 链
   let current: Window = window;
   for (let i = 0; i < 5; i++) {
     try {
       if (current.parent && current.parent !== current) {
-        const p = tryGet(current.parent as any);
-        if (p) return p;
+        const parentApi = tryGet(current.parent as any);
+        if (parentApi) return parentApi;
         current = current.parent;
       } else {
         break;
@@ -97,12 +90,8 @@ function getAccessibleSTAPI(): any | null {
   return null;
 }
 
-/**
- * 通过 postMessage 调用酒馆端的 ST_API（跨域 iframe 场景）
- * 需要酒馆端注入 `sillytavern-message-handler.js` 来响应 `ST_API_CALL`
- */
 async function requestSTAPIViaPostMessage<T>(
-  endpoint: string, // e.g. 'prompt.generate'
+  endpoint: string,
   params: any = {},
   timeout: number = 120000
 ): Promise<T | null> {
@@ -145,15 +134,14 @@ async function requestSTAPIViaPostMessage<T>(
 
     window.addEventListener('message', messageHandler);
 
-    // 广播给 parent/top（谁有 handler 谁响应）
-    for (const t of targets) {
+    for (const target of targets) {
       try {
-        t.postMessage(
+        target.postMessage(
           {
             type: 'ST_API_CALL',
             id: messageId,
             endpoint,
-            params
+            params,
           },
           '*'
         );
@@ -174,7 +162,6 @@ async function requestSTAPIViaPostMessage<T>(
 
 async function hasSTProxy(timeoutMs: number = 1200): Promise<boolean> {
   try {
-    // 用一个无副作用、几乎总是可用的 endpoint 探活
     const res = await requestSTAPIViaPostMessage<any>('ui.listSettingsPanels', {}, timeoutMs);
     return !!res;
   } catch {
@@ -182,11 +169,21 @@ async function hasSTProxy(timeoutMs: number = 1200): Promise<boolean> {
   }
 }
 
-/**
- * 使用 st-api-wrapper 的 `ST_API.prompt.generate` 后台生成文本。
- * - 默认 writeToChat=false（只返回文本）
- * - 支持通过 extraBlocks 注入系统提示词
- */
+function getGeneratedTextOrThrow(result: any): string {
+  const text = result?.text;
+  if (typeof text !== 'string') {
+    throw new Error('ST_API.prompt.generate 返回结果缺少 text 字段');
+  }
+
+  if (text.trim().length === 0) {
+    throw new Error(
+      'ST_API.prompt.generate 返回空文本；说明酒馆侧生成链路已经执行，但当前模型、代理或预设没有产出内容。若开启了酒馆侧流式传输，请先关闭。常见原因还包括安全拦截、上下文过长，或上游接口静默失败。'
+    );
+  }
+
+  return text;
+}
+
 export async function generateTextViaST(
   input: STGenerateViaChatHistoryInput
 ): Promise<string> {
@@ -199,19 +196,15 @@ export async function generateTextViaST(
     ...(input.extraBlocks ? { extraBlocks: input.extraBlocks } : {}),
     ...(input.preset ? { preset: input.preset } : {}),
     ...(input.worldBook ? { worldBook: input.worldBook } : {}),
-    chatHistory: input.chatHistory
+    chatHistory: input.chatHistory,
   };
 
-  // 1) 同域可直连
   const stApi = getAccessibleSTAPI();
   if (stApi?.prompt?.generate) {
     const res = await stApi.prompt.generate(payload);
-    const text = res?.text;
-    if (typeof text === 'string') return text;
-    throw new Error('ST_API.prompt.generate 返回空结果');
+    return getGeneratedTextOrThrow(res);
   }
 
-  // 2) 直连不可用时，先探活 postMessage 代理，避免无响应时卡住整整 timeoutMs
   const proxyOk = await hasSTProxy(1200);
   if (!proxyOk) {
     throw new Error(
@@ -219,10 +212,10 @@ export async function generateTextViaST(
     );
   }
 
-  // 2) 跨域：postMessage 代理
   const proxyRes = await requestSTAPIViaPostMessage<any>('prompt.generate', payload, timeoutMs);
-  const proxyText = proxyRes?.text;
-  if (typeof proxyText === 'string') return proxyText;
+  if (proxyRes) {
+    return getGeneratedTextOrThrow(proxyRes);
+  }
 
   throw new Error('无法调用 ST_API.prompt.generate：ST_API 不可用或跨域代理未安装');
 }

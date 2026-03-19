@@ -20,6 +20,10 @@ import {
 import { appendDebugLog } from "./debugLogService";
 import { generateTextViaST, toSTChatMessage, type STGenerateViaChatHistoryInput } from "./stGenerateService";
 import type { STAPIGenerateInput } from "../types/stApi";
+import {
+  DAILY_DEGRADATION_GAIN_LIMIT,
+  DAILY_FAVORABILITY_GAIN_LIMIT,
+} from "../utils/bodyStatusUtils";
 
 type STWrappedPromptGeneratePayload = Pick<
   STGenerateViaChatHistoryInput,
@@ -566,7 +570,7 @@ Language: Chinese (Simplified).
 温婉对哥哥的好感度决定了她愿意接受的行为程度。温婉一开始就喜欢哥哥，但道德枷锁让她不敢迈出第一步，所以会用若有若无的挑逗和撩拨来试探哥哥。
 
 - **每日增长上限**：
-  * 好感度每天最多增长5点。如果当天已经增长了5点，即使发生新事件，也不再增长好感度。
+  * 好感度每天最多增长${DAILY_FAVORABILITY_GAIN_LIMIT}点。如果当天已经增长了${DAILY_FAVORABILITY_GAIN_LIMIT}点，即使发生新事件，也不再增长好感度。
   * 系统会自动跟踪每日增长量，并在每天0点重置计数器。
   * 好感度降低不受此限制（如哥哥做下头行为导致的好感度下降）。
 
@@ -1987,8 +1991,8 @@ User Location: ${userLocation}
 Wenwan Location: ${currentStatus.location}${currentStatus.exactLocation ? ` (精确位置: ${currentStatus.exactLocation})` : ''}${currentStatus.isAccessible === false ? ' (不可访问，如游艇已出海)' : ''}
 Wenwan Status: ${JSON.stringify(currentStatus, null, 2)}
 Current Game Time: ${memoryData?.gameTime ? `${memoryData.gameTime.year}-${String(memoryData.gameTime.month).padStart(2, '0')}-${String(memoryData.gameTime.day).padStart(2, '0')} ${memoryData.gameTime.hour}:${String(memoryData.gameTime.minute).padStart(2, '0')} (${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][memoryData.gameTime.weekday]})` : '未知'}
-Today's Favorability Gain: ${currentStatus.todayFavorabilityGain || 0}/5 (每日上限5点)
-Today's Degradation Gain: ${currentStatus.todayDegradationGain || 0}/5 (每日上限5点)
+Today's Favorability Gain: ${currentStatus.todayFavorabilityGain || 0}/${DAILY_FAVORABILITY_GAIN_LIMIT} (每日上限${DAILY_FAVORABILITY_GAIN_LIMIT}点)
+Today's Degradation Gain: ${currentStatus.todayDegradationGain || 0}/${DAILY_DEGRADATION_GAIN_LIMIT} (每日上限${DAILY_DEGRADATION_GAIN_LIMIT}点)
 
 **PRECISE LOCATION SYSTEM (精确位置系统)**:
 - 如果温婉在大地点（school, exhibition_center, port, mall等），你必须设置exactLocation字段，描述她的具体位置（如"cos社活动室"、"A展厅"、"游艇上"等）
@@ -2132,8 +2136,12 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
     } catch (error: any)
     {
       console.warn('[characterService] 强制使用酒馆 Generate 失败，停止自动降级以避免重复请求:', error);
+      const originalMessage = error?.message || '未知错误';
+      const causeHint = originalMessage.includes('ST_API.prompt.generate 返回空文本')
+        ? '日志如果显示 `response.text` 为空，说明 st-api-wrapper 和桥接本身大概率已经通了，问题在酒馆当前生成链路本身。若开启了酒馆侧流式传输，请先关闭。然后优先检查酒馆当前使用的模型、代理、预设、上下文长度和内容风控。'
+        : '请确保：1) 已安装并启用 st-api-wrapper；2) 若跨域 iframe，酒馆端已注入 sillytavern-message-handler.js；3) 或关闭该开关后改走直连主API。';
       throw new Error(
-        `已开启“优先使用酒馆 Generate（ST_API）”，本次不会再自动回退到直连主API，以避免重复请求。请确保：1) 已安装并启用 st-api-wrapper；2) 若跨域 iframe，酒馆端已注入 sillytavern-message-handler.js；3) 或关闭该开关后改走直连主API。原始错误: ${error?.message || '未知错误'}`
+        `已开启“优先使用酒馆 Generate（ST_API）”，本次不会再自动回退到直连主API，以避免重复请求。${causeHint} 原始错误: ${originalMessage}`
       );
     }
   }
