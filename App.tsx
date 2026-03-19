@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { AlertCircle, CheckCircle2, FileText, Layers3, Loader2 } from 'lucide-react';
 import { CharacterTachie } from './components/CharacterTachie';
 import { DialogueInterface } from './components/DialogueInterface';
 import { PhoneInterface } from './components/PhoneInterface';
@@ -6,19 +7,26 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { StartScreen } from './components/StartScreen';
 import { Wallpaper } from './components/Wallpaper';
 import { SettingsProvider, useSettings } from './contexts/SettingsContext';
-import { isMobileBrowser as checkMobileBrowser } from './utils/deviceUtils';
 import { useDialogue } from './hooks/useDialogue';
 import { useGameTime } from './hooks/useGameTime';
 import { useLocation } from './hooks/useLocation';
 import { loadGame, saveGame, shouldAutoSave } from './services/saveService';
 import { clearSystemInstructionCache } from './services/characterService';
 import { getSecondaryAIConfig } from './services/aiConfigUtils';
+import { buildDialogueRounds, getSummaryCheckpoint, SUMMARY_BATCH_SIZE } from './services/dialogueSummaryUtils';
 import { setupSillyTavernEventListeners } from './services/sillytavernApiService';
 import { appendDebugLog } from './services/debugLogService';
-import { summarizeCharacterMessages, summarizeSummaryEntries } from './services/summaryService';
-import { AppID, BackpackItem, BodyStatus, CalendarEvent, GameTime, LocationID, Message, Tweet } from './types';
+import { summarizeBigSummaryEntries, summarizeDialogueRounds } from './services/summaryService';
+import { AppID, BackpackItem, BodyStatus, CalendarEvent, GameTime, LocationID, Message, SummaryEntry, Tweet } from './types';
 
 // --- Main App Logic ---
+
+type SummaryToastState = {
+  visible: boolean;
+  type: 'loading' | 'success' | 'error';
+  stage: 'small' | 'big';
+  message: string;
+};
 
 // 内部组件，需要使用SettingsContext
 const AppContent: React.FC = () => {
@@ -79,33 +87,98 @@ const AppContent: React.FC = () => {
   ]);
 
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]); // New State for Memories
-  const [todaySummaries, setTodaySummaries] = useState<string[]>([]); // 今日总结列表
-  const todaySummariesRef = useRef<string[]>([]);
-  const todaySummary = todaySummaries.map((summary, index) => `${index + 1}. ${summary}`).join('\n');
+  const [todaySummaries, setTodaySummaries] = useState<SummaryEntry[]>([]); // 小总结列表
+  const todaySummariesRef = useRef<SummaryEntry[]>([]);
+  const [bigSummaries, setBigSummaries] = useState<string[]>([]); // 大总结列表
+  const bigSummariesRef = useRef<string[]>([]);
+  const [summaryToast, setSummaryToast] = useState<SummaryToastState>({
+    visible: false,
+    type: 'loading',
+    stage: 'small',
+    message: '正在生成小总结...',
+  });
+  const summaryToastTimerRef = useRef<number | null>(null);
+  const todaySummary = todaySummaries.map((summary, index) => `${index + 1}. ${summary.content}`).join('\n');
+  const latestTodaySummary = todaySummaries[todaySummaries.length - 1]?.content || '';
 
-  const getCharacterMessages = (messageList: Message[]) =>
-    messageList.filter(message => message.sender === 'character');
+  const cloneGameTime = (time: GameTime): GameTime => ({
+    ...time,
+    weather: { ...time.weather },
+  });
 
-  const normalizeTodaySummaries = (summaries?: string[], legacySummary: string = '') => {
-    if (Array.isArray(summaries) && summaries.length > 0) {
+  const normalizeTodaySummaries = (summaries?: Array<SummaryEntry | string>, legacySummary: string = '') => {
+    if (Array.isArray(summaries) && summaries.length > 0)
+    {
       return summaries
-        .map(summary => summary.trim())
-        .filter(summary => summary.length > 0);
+        .map((summary) => {
+          if (typeof summary === 'string')
+          {
+            const trimmedSummary = summary.trim();
+            return trimmedSummary
+              ? {
+                content: trimmedSummary,
+                gameTime: cloneGameTime(gameTime),
+              }
+              : null;
+          }
+
+          if (!summary || typeof summary !== 'object')
+          {
+            return null;
+          }
+
+          const content = typeof summary.content === 'string' ? summary.content.trim() : '';
+          if (!content)
+          {
+            return null;
+          }
+
+          return {
+            content,
+            gameTime: summary.gameTime ? cloneGameTime(summary.gameTime) : cloneGameTime(gameTime),
+          };
+        })
+        .filter((summary): summary is SummaryEntry => summary !== null);
     }
 
     return legacySummary
-      ? [legacySummary.trim()].filter(summary => summary.length > 0)
+      ? legacySummary
+        .split(/\n+/)
+        .map(summary => summary.trim())
+        .filter(summary => summary.length > 0)
+        .map(summary => ({
+          content: summary,
+          gameTime: cloneGameTime(gameTime),
+        }))
       : [];
   };
 
-  const replaceTodaySummaries = (summaries?: string[], legacySummary: string = '') => {
+  const replaceTodaySummaries = (summaries?: Array<SummaryEntry | string>, legacySummary: string = '') => {
     const normalizedSummaries = normalizeTodaySummaries(summaries, legacySummary);
     todaySummariesRef.current = normalizedSummaries;
     setTodaySummaries(normalizedSummaries);
   };
 
+  const normalizeBigSummaries = (summaries?: string[]) => {
+    if (!Array.isArray(summaries) || summaries.length === 0)
+    {
+      return [];
+    }
+
+    return summaries
+      .map(summary => summary.trim())
+      .filter(summary => summary.length > 0);
+  };
+
+  const replaceBigSummaries = (summaries?: string[]) => {
+    const normalizedSummaries = normalizeBigSummaries(summaries);
+    bigSummariesRef.current = normalizedSummaries;
+    setBigSummaries(normalizedSummaries);
+  };
+
   const toLoggableError = (error: unknown) => {
-    if (error instanceof Error) {
+    if (error instanceof Error)
+    {
       return {
         message: error.message,
         stack: error.stack,
@@ -118,7 +191,8 @@ const AppContent: React.FC = () => {
   };
 
   const appendSummaryDebugLog = (event: string, data: Record<string, unknown>) => {
-    if (!settings.debugLoggingEnabled) {
+    if (!settings.debugLoggingEnabled)
+    {
       return;
     }
 
@@ -129,9 +203,46 @@ const AppContent: React.FC = () => {
     });
   };
 
-  const getSummaryCheckpoint = (messageList: Message[]) => {
-    const characterCount = getCharacterMessages(messageList).length;
-    return Math.floor(characterCount / 5) * 5;
+  const clearSummaryToastTimer = () => {
+    if (summaryToastTimerRef.current !== null)
+    {
+      window.clearTimeout(summaryToastTimerRef.current);
+      summaryToastTimerRef.current = null;
+    }
+  };
+
+  const showSummaryToast = (
+    type: SummaryToastState['type'],
+    stage: SummaryToastState['stage'],
+    message: string,
+    autoHide: boolean = false
+  ) => {
+    clearSummaryToastTimer();
+    setSummaryToast({
+      visible: true,
+      type,
+      stage,
+      message,
+    });
+
+    if (autoHide)
+    {
+      summaryToastTimerRef.current = window.setTimeout(() => {
+        setSummaryToast(prev => ({
+          ...prev,
+          visible: false,
+        }));
+        summaryToastTimerRef.current = null;
+      }, 2000);
+    }
+  };
+
+  const hideSummaryToast = () => {
+    clearSummaryToastTimer();
+    setSummaryToast(prev => ({
+      ...prev,
+      visible: false,
+    }));
   };
 
   // 用于保存编辑点的状态快照
@@ -141,8 +252,10 @@ const AppContent: React.FC = () => {
     userLocation: LocationID;
     tweets: Tweet[];
     calendarEvents: CalendarEvent[];
-    todaySummaries: string[];
+    todaySummaries: SummaryEntry[];
+    bigSummaries: string[];
     summaryCheckpoint: number;
+    bigSummaryCheckpoint: number;
     gameTime: GameTime;
   }>>(new Map());
 
@@ -160,8 +273,10 @@ const AppContent: React.FC = () => {
       tweets: [...tweets],
       calendarEvents: [...calendarEvents],
       todaySummaries: [...todaySummariesRef.current],
+      bigSummaries: [...bigSummariesRef.current],
       summaryCheckpoint: getSummaryCheckpoint(messages.slice(0, messageIndex + 1)),
-      gameTime: { ...gameTime }
+      bigSummaryCheckpoint: lastBigSummaryCheckpoint.current,
+      gameTime: cloneGameTime(gameTime)
     };
     messageSnapshotsRef.current.set(messageId, snapshot);
 
@@ -176,12 +291,14 @@ const AppContent: React.FC = () => {
     const newTime = { ...currentTime };
     newTime.day += days;
     // 处理月份和年份的进位
-    while (true) {
+    while (true)
+    {
       const maxDays = new Date(newTime.year, newTime.month, 0).getDate();
       if (newTime.day <= maxDays) break;
       newTime.day -= maxDays;
       newTime.month += 1;
-      if (newTime.month > 12) {
+      if (newTime.month > 12)
+      {
         newTime.month = 1;
         newTime.year += 1;
       }
@@ -238,22 +355,28 @@ const AppContent: React.FC = () => {
     let discoveryChance = 0;
 
     // 好感度越高，越不容易被发现
-    if (favorability >= 80) {
+    if (favorability >= 80)
+    {
       discoveryChance = 10; // 10%概率被发现
-    } else if (favorability >= 60) {
+    } else if (favorability >= 60)
+    {
       discoveryChance = 25; // 25%概率被发现
-    } else if (favorability >= 40) {
+    } else if (favorability >= 40)
+    {
       discoveryChance = 40; // 40%概率被发现
-    } else {
+    } else
+    {
       discoveryChance = 60; // 60%概率被发现
     }
 
     const isDiscovered = Math.random() * 100 < discoveryChance;
 
-    if (isDiscovered) {
+    if (isDiscovered)
+    {
       // 被发现
       await handleAction('(System: User sneaks into Wenwan\'s room at midnight to steal underwear, but Wenwan wakes up and discovers him. Generate a dramatic scene where Wenwan confronts the user. The reaction should be based on favorability: high favorability = shocked but forgiving, low favorability = angry and disappointed. Update degradation if favorability is low.)', true);
-    } else {
+    } else
+    {
       // 成功偷到
       await handleAction('(System: User sneaks into Wenwan\'s room at midnight and successfully steals her underwear without being discovered. Generate a scene describing the action and Wenwan sleeping peacefully. Update favorability slightly down if this is a "creepy" action, or degradation up if favorability is already low.)', true);
     }
@@ -287,18 +410,21 @@ const AppContent: React.FC = () => {
     if (messageIndex === -1) return;
 
     // 如果重新生成的是AI消息，删除该消息及之后的所有消息
-    if (messages[messageIndex].sender === 'character') {
+    if (messages[messageIndex].sender === 'character')
+    {
       const messageTime = messages[messageIndex].timestamp;
 
       // 找到该AI消息对应的用户消息（应该是前一条）
       const userMessageIndex = messageIndex - 1;
-      if (userMessageIndex >= 0 && messages[userMessageIndex].sender === 'user') {
+      if (userMessageIndex >= 0 && messages[userMessageIndex].sender === 'user')
+      {
         const userMessage = messages[userMessageIndex];
 
         // 检查是否有该用户消息的编辑点快照
         const snapshot = messageSnapshotsRef.current.get(userMessage.id);
 
-        if (snapshot) {
+        if (snapshot)
+        {
           // 使用编辑点的状态快照
           // 删除该AI消息及之后的所有消息
           setMessages(snapshot.messages);
@@ -309,14 +435,17 @@ const AppContent: React.FC = () => {
           setTweets(snapshot.tweets);
           setCalendarEvents(snapshot.calendarEvents);
           replaceTodaySummaries(snapshot.todaySummaries);
+          replaceBigSummaries(snapshot.bigSummaries);
           lastSummaryMessageCount.current = snapshot.summaryCheckpoint;
+          lastBigSummaryCheckpoint.current = snapshot.bigSummaryCheckpoint;
           setGameTime(snapshot.gameTime);
 
           // 重新触发AI回复（使用系统操作，不重复添加用户消息）
           setTimeout(() => {
             handleAction(userMessage.text, true);
           }, 100);
-        } else {
+        } else
+        {
           // 没有快照，使用当前状态（但删除后续消息）
           setMessages(prev => prev.slice(0, messageIndex));
 
@@ -358,8 +487,9 @@ const AppContent: React.FC = () => {
   // Game Time Management
   const { gameTime, advance, skipToday, skipTwoDays, skipWeek, formatTime, formatDate, setGameTime } = useGameTime();
 
-  // 用于跟踪上次总结时的消息数量
+  // 用于跟踪上次总结时已处理的完整对话轮次数
   const lastSummaryMessageCount = useRef(0);
+  const lastBigSummaryCheckpoint = useRef(0);
   const summaryGenerationTargetRef = useRef<number | null>(null);
 
   // 用于跟踪上次自动存档的时间
@@ -389,7 +519,7 @@ const AppContent: React.FC = () => {
     // 新增：弧光系统（初始为null，处于试探期）
     arcLight: null,
     // 已删除：trialPeriod, lastArcLightCheck（试探期系统已移除）
-    // 新增：黄毛系统（初始为空）
+    // 新增：黄毛系统（初始为空，后续可发展为双黄毛）
     yellowHair1: null,
     yellowHair2: null,
     // 新增：身体改造（初始未完成）
@@ -405,7 +535,8 @@ const AppContent: React.FC = () => {
 
   const handleStartGame = () => {
     setGameStarted(true);
-    if (document.documentElement.requestFullscreen) {
+    if (document.documentElement.requestFullscreen)
+    {
       document.documentElement.requestFullscreen().catch((err) => {
         console.log("Error attempting to enable full-screen mode:", err.message);
       });
@@ -429,7 +560,8 @@ const AppContent: React.FC = () => {
 
   // 从奢侈品店购买服装：扣钱+进背包（不直接解锁立绘）
   const handleBuyClothing = async (outfitId: string, name: string, description: string, price: number) => {
-    if (walletBalance < price) {
+    if (walletBalance < price)
+    {
       alert('余额不足，无法购买该服装。');
       return;
     }
@@ -456,10 +588,12 @@ const AppContent: React.FC = () => {
 
     // 检查温婉是否在身边
     const isWenwanNearby = bodyStatus.location === userLocation;
-    if (isWenwanNearby) {
+    if (isWenwanNearby)
+    {
       // 温婉在身边，生成剧情对话
       await handleAction(`(System: 哥哥在奢侈品店购买了【${name}】，温婉就在身边看到了。根据当前好感度，生成温婉的反应和对话。她可能会询问、评论、或者表现出好奇/害羞等情绪。如果好感度高，她可能会期待哥哥送给她；如果好感度低，她可能会觉得奇怪或保持距离。)`, true);
-    } else {
+    } else
+    {
       // 温婉不在身边，简单描述即可
       setMessages(prev => [...prev, {
         id: itemId,
@@ -476,10 +610,12 @@ const AppContent: React.FC = () => {
   const handleUseItem = async (itemId: string, name: string, description: string, handleActionCallback?: (text: string, isSystem?: boolean) => Promise<void>) => {
     // 检查温婉是否在身边
     const isWenwanNearby = bodyStatus.location === userLocation;
-    if (isWenwanNearby && handleActionCallback) {
+    if (isWenwanNearby && handleActionCallback)
+    {
       // 温婉在身边，生成使用物品的剧情对话
       await handleActionCallback(`(System: 哥哥使用了【${name}】（${description}），温婉就在身边。根据当前好感度和物品类型，生成温婉的反应和对话。她可能会害羞、好奇、或者表现出不同的情绪。如果好感度高，她可能会配合或接受；如果好感度低，她可能会觉得尴尬或拒绝。记得更新情绪、好感度、性欲等相关状态。)`, true);
-    } else if (!isWenwanNearby) {
+    } else if (!isWenwanNearby)
+    {
       // 温婉不在身边，提示不在
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
@@ -494,12 +630,14 @@ const AppContent: React.FC = () => {
   const handleGiftItem = async (itemId: string, name: string, description: string, handleActionCallback?: (text: string, isSystem?: boolean) => Promise<void>) => {
     // 检查温婉是否在身边
     const isWenwanNearby = bodyStatus.location === userLocation;
-    if (isWenwanNearby && handleActionCallback) {
+    if (isWenwanNearby && handleActionCallback)
+    {
       // 温婉在身边，生成赠送物品的剧情对话
       await handleActionCallback(`(System: 哥哥将【${name}】（${description}）赠送给了温婉。根据当前好感度和物品类型，生成温婉收到礼物后的反应和对话。她可能会害羞、好奇、或者表现出不同的情绪。如果好感度高，她可能会接受并配合使用；如果好感度低，她可能会觉得尴尬或拒绝。记得更新情绪和好感度。)`, true);
       // 从背包中移除物品
       setBackpackItems(prev => prev.filter(item => item.id !== itemId));
-    } else if (!isWenwanNearby) {
+    } else if (!isWenwanNearby)
+    {
       // 温婉不在身边，提示不在
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
@@ -512,7 +650,8 @@ const AppContent: React.FC = () => {
 
   // 在背包中赠送服装给温婉：移除背包条目+解锁对应立绘
   const handleGiftClothing = async (outfitId: string, itemId: string, handleActionCallback?: (text: string, isSystem?: boolean) => Promise<void>) => {
-    if (!outfitId) {
+    if (!outfitId)
+    {
       alert('这件物品没有绑定对应的服装ID，无法解锁立绘。');
       return;
     }
@@ -529,10 +668,12 @@ const AppContent: React.FC = () => {
 
     // 检查温婉是否在身边
     const isWenwanNearby = bodyStatus.location === userLocation;
-    if (isWenwanNearby && handleActionCallback) {
+    if (isWenwanNearby && handleActionCallback)
+    {
       // 温婉在身边，生成剧情对话
       await handleActionCallback(`(System: 哥哥将【${itemToGift.name}】赠送给了温婉。根据当前好感度，生成温婉收到礼物后的反应和对话。她可能会开心、害羞、感动等。如果好感度高，她可能会主动拥抱或亲吻；如果好感度低，她可能会礼貌地接受但保持距离。记得更新情绪和好感度。)`, true);
-    } else if (!isWenwanNearby) {
+    } else if (!isWenwanNearby)
+    {
       // 温婉不在身边，简单描述即可
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
@@ -555,15 +696,19 @@ const AppContent: React.FC = () => {
       calendarEvents,
       todaySummary,
       todaySummaries,
+      bigSummaries,
       lastSummaryMessageCount.current,
+      lastBigSummaryCheckpoint.current,
       customName,
       walletBalance,
       walletTransactions,
       backpackItems,
       unlockedOutfits
     );
-    if (success) {
-      if (slotId === 0) {
+    if (success)
+    {
+      if (slotId === 0)
+      {
         lastAutoSaveTimeRef.current = { ...gameTime };
       }
     }
@@ -572,7 +717,8 @@ const AppContent: React.FC = () => {
   // 读档功能
   const handleLoadGame = (slotId: number) => {
     const save = loadGame(slotId);
-    if (save) {
+    if (save)
+    {
       // 恢复游戏状态
       setMessages(save.messages);
       setBodyStatus(save.bodyStatus);
@@ -580,26 +726,33 @@ const AppContent: React.FC = () => {
       setTweets(save.tweets);
       setCalendarEvents(save.calendarEvents);
       replaceTodaySummaries(save.todaySummaries, save.todaySummary);
+      replaceBigSummaries(save.bigSummaries);
       lastSummaryMessageCount.current = save.summaryCheckpoint ?? getSummaryCheckpoint(save.messages);
+      lastBigSummaryCheckpoint.current = save.bigSummaryCheckpoint ?? 0;
       summaryGenerationTargetRef.current = null;
 
       // 恢复钱包数据
-      if (save.walletBalance !== undefined) {
+      if (save.walletBalance !== undefined)
+      {
         setWalletBalance(save.walletBalance);
       }
-      if (save.walletTransactions) {
+      if (save.walletTransactions)
+      {
         setWalletTransactions(save.walletTransactions);
       }
 
       // 恢复背包数据
-      if (save.backpackItems) {
+      if (save.backpackItems)
+      {
         setBackpackItems(save.backpackItems);
       }
 
       // 恢复已解锁服装（如无则使用默认）
-      if (save.unlockedOutfits && save.unlockedOutfits.length > 0) {
+      if (save.unlockedOutfits && save.unlockedOutfits.length > 0)
+      {
         setUnlockedOutfits(save.unlockedOutfits);
-      } else {
+      } else
+      {
         setUnlockedOutfits(defaultUnlockedOutfits);
       }
 
@@ -613,7 +766,8 @@ const AppContent: React.FC = () => {
       setGameStarted(true);
 
       alert('存档读取成功！');
-    } else {
+    } else
+    {
       alert('读取存档失败！');
     }
   };
@@ -637,6 +791,9 @@ const AppContent: React.FC = () => {
     setCalendarEvents,
     avatarUrl: AVATAR_URL,
     todaySummary, // 传递今日记忆
+    todaySummaries,
+    bigSummaries,
+    summaryCheckpoint: lastSummaryMessageCount.current,
     advance, // 传递时间推进函数
     gameTime, // 传递当前游戏时间
     setUserLocation, // 传递用户位置更新函数
@@ -670,7 +827,7 @@ const AppContent: React.FC = () => {
   });
 
   const previousTimeRef = useRef<GameTime>(gameTime);
- 
+
   const handleSkipByMinutes = async (minutes: number, label: string) => {
     const newTime = calculateAdvancedTime(gameTime, minutes);
     advance(minutes);
@@ -700,22 +857,26 @@ const AppContent: React.FC = () => {
     const oldTime = { ...gameTime };
     // 推进30分钟
     advance(30);
-    
+
     // 计算新时间（30分钟后）
     let newTime = { ...gameTime };
     newTime.minute += 30;
-    if (newTime.minute >= 60) {
+    if (newTime.minute >= 60)
+    {
       newTime.minute -= 60;
       newTime.hour += 1;
-      if (newTime.hour >= 24) {
+      if (newTime.hour >= 24)
+      {
         newTime.hour = 0;
         newTime.day += 1;
         // 处理月份和年份进位
         const maxDays = new Date(newTime.year, newTime.month, 0).getDate();
-        if (newTime.day > maxDays) {
+        if (newTime.day > maxDays)
+        {
           newTime.day = 1;
           newTime.month += 1;
-          if (newTime.month > 12) {
+          if (newTime.month > 12)
+          {
             newTime.month = 1;
             newTime.year += 1;
           }
@@ -723,11 +884,11 @@ const AppContent: React.FC = () => {
         newTime.weekday = (newTime.weekday + 1) % 7;
       }
     }
-    
+
     const period = newTime.hour < 12 ? '上午' : newTime.hour < 18 ? '下午' : '晚上';
     const displayHour = newTime.hour > 12 ? newTime.hour - 12 : newTime.hour === 0 ? 12 : newTime.hour;
     const timeStr = `${period}${displayHour}点${newTime.minute === 0 ? '' : newTime.minute + '分'}`;
-    
+
     // 使用 handleAction 生成AI剧情
     await handleAction(`(System: 时间已经流逝了30分钟，现在是${newTime.year}年${newTime.month}月${newTime.day}日 ${timeStr}。生成一段剧情描述，描述这30分钟里发生的事情，以及现在的情况。温婉在哪里、在做什么、心情如何。就像描述"前往电影院"一样，生成完整的剧情场景。)`, true);
   };
@@ -736,9 +897,9 @@ const AppContent: React.FC = () => {
     const oldTime = { ...gameTime };
     const newTime = calculateSkippedTime(gameTime, 1);
     skipToday(); // 跳到第二天早上7点（原来是skipTwoDays，现在改为skipToday，推进1天）
-    
+
     // 跳过1天不减少好感度（只有跳过3天才减少）
-    
+
     // 使用 handleAction 生成AI剧情
     await handleAction(`(System: 时间已经流逝了1天，现在是${newTime.year}年${newTime.month}月${newTime.day}日的早上7点。生成一段剧情描述，描述这1天里发生的事情，以及现在（第二天早上）的情况。温婉在哪里、在做什么、心情如何。就像描述"前往电影院"一样，生成完整的剧情场景。)`, true);
   };
@@ -747,17 +908,19 @@ const AppContent: React.FC = () => {
     const oldTime = { ...gameTime };
     // 推进3天（原来是7天）
     const newTime = calculateSkippedTime(gameTime, 3);
-    
+
     // 手动推进3天
     let updatedTime = { ...gameTime };
     updatedTime.day += 3;
     // 处理月份和年份的进位
-    while (true) {
+    while (true)
+    {
       const maxDays = new Date(updatedTime.year, updatedTime.month, 0).getDate();
       if (updatedTime.day <= maxDays) break;
       updatedTime.day -= maxDays;
       updatedTime.month += 1;
-      if (updatedTime.month > 12) {
+      if (updatedTime.month > 12)
+      {
         updatedTime.month = 1;
         updatedTime.year += 1;
       }
@@ -766,7 +929,7 @@ const AppContent: React.FC = () => {
     updatedTime.minute = 0;
     updatedTime.weekday = (updatedTime.weekday + 3) % 7;
     setGameTime(updatedTime);
-    
+
     // 跳过3天时，好感度减3
     setBodyStatus(prev => {
       const newFavorability = Math.max(0, prev.favorability - 3); // 确保不低于0
@@ -776,7 +939,7 @@ const AppContent: React.FC = () => {
         favorability: newFavorability
       };
     });
-    
+
     // 使用 handleAction 生成AI剧情
     await handleAction(`(System: 时间已经流逝了3天，现在是${newTime.year}年${newTime.month}月${newTime.day}日的早上7点。生成一段剧情描述，描述这3天里发生的事情，以及现在（第四天早上）的情况。温婉在哪里、在做什么、心情如何。就像描述"前往电影院"一样，生成完整的剧情场景。)`, true);
   };
@@ -789,30 +952,31 @@ const AppContent: React.FC = () => {
   // 监听消息变化，生成总结（不再自动推进时间）
   // 时间推进改为在用户发送消息时推进，而不是AI回复后
   useEffect(() => {
-    const characterMessages = getCharacterMessages(messages);
-    const characterMessageCount = characterMessages.length;
-    const nextSummaryCheckpoint = lastSummaryMessageCount.current + 5;
+    const dialogueRounds = buildDialogueRounds(messages);
+    const dialogueRoundCount = dialogueRounds.length;
+    const nextSummaryCheckpoint = lastSummaryMessageCount.current + SUMMARY_BATCH_SIZE;
 
-    if (characterMessageCount < nextSummaryCheckpoint) {
+    if (dialogueRoundCount < nextSummaryCheckpoint)
+    {
       return;
     }
 
-    if (summaryGenerationTargetRef.current === nextSummaryCheckpoint) {
+    if (summaryGenerationTargetRef.current === nextSummaryCheckpoint)
+    {
       return;
     }
 
     const existingSummaryCount = todaySummariesRef.current.length;
-    const summaryAIConfig = settings.useIndependentContentAI
-      ? backgroundAIConfig
-      : { apiBase: '', apiKey: '', model: '' };
+    const summaryAIConfig = backgroundAIConfig;
     const summaryAIProvider = settings.useIndependentContentAI
       ? (summaryAIConfig === settings.contentAI ? 'contentAI' : 'mainAI fallback')
-      : 'local fallback';
+      : 'mainAI';
     summaryGenerationTargetRef.current = nextSummaryCheckpoint;
+    showSummaryToast('loading', 'small', '正在生成小总结...');
     console.log('[App] Generating calendar summary with', summaryAIProvider);
-    console.log(`[App][Summary] 触发摘要生成：角色消息=${characterMessageCount}，当前checkpoint=${lastSummaryMessageCount.current}，当前已有${existingSummaryCount}条summary`);
+    console.log(`[App][Summary] 触发摘要生成：完整对话轮次=${dialogueRoundCount}，当前checkpoint=${lastSummaryMessageCount.current}，当前已有${existingSummaryCount}条summary`);
     appendSummaryDebugLog('summary-triggered', {
-      characterMessageCount,
+      dialogueRoundCount,
       existingSummaryCount,
       currentCheckpoint: lastSummaryMessageCount.current,
       targetCheckpoint: nextSummaryCheckpoint,
@@ -821,19 +985,26 @@ const AppContent: React.FC = () => {
     let cancelled = false;
 
     const updateSummaries = async () => {
+      const initialSmallSummaryCount = todaySummariesRef.current.length;
       let processedCheckpoint = lastSummaryMessageCount.current;
       let nextSummaries = [...todaySummariesRef.current];
+      let processedBigSummaryCheckpoint = lastBigSummaryCheckpoint.current;
+      let nextBigSummaries = [...bigSummariesRef.current];
 
-      try {
-        while (characterMessages.length >= processedCheckpoint + 5) {
-          const targetCheckpoint = processedCheckpoint + 5;
-          const summaryBatch = characterMessages.slice(processedCheckpoint, targetCheckpoint);
-          const summary = await summarizeCharacterMessages(summaryBatch, summaryAIConfig);
+      try
+      {
+        while (dialogueRounds.length >= processedCheckpoint + SUMMARY_BATCH_SIZE)
+        {
+          const targetCheckpoint = dialogueRounds.length;
+          const summaryBatch = dialogueRounds.slice(processedCheckpoint, targetCheckpoint);
+          const summary = await summarizeDialogueRounds(summaryBatch, summaryAIConfig, bodyStatus);
 
-          if (cancelled) {
-            console.log(`[App][Summary] 本次摘要已取消：角色消息=${characterMessageCount}`);
+          if (cancelled)
+          {
+            hideSummaryToast();
+            console.log(`[App][Summary] 本次摘要已取消：完整对话轮次=${dialogueRoundCount}`);
             appendSummaryDebugLog('summary-cancelled', {
-              characterMessageCount,
+              dialogueRoundCount,
               currentSummaryCount: todaySummariesRef.current.length,
               currentCheckpoint: processedCheckpoint,
               targetCheckpoint,
@@ -841,98 +1012,144 @@ const AppContent: React.FC = () => {
             return;
           }
 
-          if (!summary) {
-            console.warn(`[App][Summary] 本次摘要生成失败：返回为空，当前仍有${todaySummariesRef.current.length}条summary`);
+          if (!summary)
+          {
+            showSummaryToast('error', 'small', '小总结生成失败', true);
+            console.warn(`[App][Summary] 本次摘要生成失败：保持checkpoint=${processedCheckpoint}，等待后续对话重试，当前未总结轮次=${targetCheckpoint - processedCheckpoint}`);
             appendSummaryDebugLog('summary-empty', {
-              characterMessageCount,
+              dialogueRoundCount,
               currentSummaryCount: todaySummariesRef.current.length,
               currentCheckpoint: processedCheckpoint,
               targetCheckpoint,
+              willRetry: true,
             });
             return;
           }
 
           processedCheckpoint = targetCheckpoint;
-          nextSummaries = [...nextSummaries, summary];
+          nextSummaries = [
+            ...nextSummaries,
+            {
+              content: summary,
+              gameTime: cloneGameTime(gameTime),
+            },
+          ];
           console.log(`[App][Summary] 本次摘要生成成功：checkpoint已推进到${processedCheckpoint}，共有${nextSummaries.length}条summary`);
           appendSummaryDebugLog('summary-generated', {
-            characterMessageCount,
+            dialogueRoundCount,
             currentSummaryCount: nextSummaries.length,
             currentCheckpoint: processedCheckpoint,
             latestSummary: summary,
           });
+        }
 
-          if (nextSummaries.length > 20) {
-            console.log(`[App][Summary] summary数量超过20，开始归并前10条。归并前共有${nextSummaries.length}条summary`);
-            appendSummaryDebugLog('summary-merge-started', {
-              characterMessageCount,
-              currentSummaryCount: nextSummaries.length,
-              currentCheckpoint: processedCheckpoint,
-              mergeSourceCount: 10,
+        const hasNewSmallSummary = nextSummaries.length > initialSmallSummaryCount;
+
+        if (hasNewSmallSummary)
+        {
+          while (nextSummaries.length >= processedBigSummaryCheckpoint + 50)
+          {
+            showSummaryToast('loading', 'big', '正在生成大总结...');
+            const targetBigSummaryCheckpoint = processedBigSummaryCheckpoint + 50;
+            const bigSummaryBatch = nextSummaries
+              .slice(processedBigSummaryCheckpoint, targetBigSummaryCheckpoint)
+              .map(summary => summary.content);
+
+            console.log(`[App][Summary] 本轮新增了小总结，且小总结达到${targetBigSummaryCheckpoint}条，开始生成大总结`);
+            appendSummaryDebugLog('big-summary-started', {
+              dialogueRoundCount,
+              currentSmallSummaryCount: nextSummaries.length,
+              currentBigSummaryCount: nextBigSummaries.length,
+              currentBigSummaryCheckpoint: processedBigSummaryCheckpoint,
+              targetBigSummaryCheckpoint,
             });
-            const mergedSummary = await summarizeSummaryEntries(nextSummaries.slice(0, 10), summaryAIConfig);
 
-            if (cancelled) {
-              console.log(`[App][Summary] 前10条归并已取消：角色消息=${characterMessageCount}`);
-              appendSummaryDebugLog('summary-merge-cancelled', {
-                characterMessageCount,
-                currentSummaryCount: nextSummaries.length,
-                currentCheckpoint: processedCheckpoint,
+            const bigSummary = await summarizeBigSummaryEntries(bigSummaryBatch, summaryAIConfig, bodyStatus);
+
+            if (cancelled)
+            {
+              hideSummaryToast();
+              console.log(`[App][Summary] 大总结已取消：完整对话轮次=${dialogueRoundCount}`);
+              appendSummaryDebugLog('big-summary-cancelled', {
+                dialogueRoundCount,
+                currentBigSummaryCheckpoint: processedBigSummaryCheckpoint,
+                targetBigSummaryCheckpoint,
               });
               return;
             }
 
-            if (mergedSummary) {
-              console.log('[App][Summary] 前10条归并成功');
-              appendSummaryDebugLog('summary-merge-generated', {
-                characterMessageCount,
-                currentCheckpoint: processedCheckpoint,
-                mergedSummary,
+            if (!bigSummary)
+            {
+              showSummaryToast('error', 'big', '大总结生成失败', true);
+              console.warn(`[App][Summary] 大总结生成失败：保持checkpoint=${processedBigSummaryCheckpoint}，等待下次小总结成功后重试`);
+              appendSummaryDebugLog('big-summary-empty', {
+                dialogueRoundCount,
+                currentSmallSummaryCount: nextSummaries.length,
+                currentBigSummaryCheckpoint: processedBigSummaryCheckpoint,
+                targetBigSummaryCheckpoint,
+                willRetry: true,
+                retryCondition: 'after-next-small-summary',
               });
-            } else {
-              console.warn('[App][Summary] 前10条归并返回为空，使用本地兜底拼接结果');
-              appendSummaryDebugLog('summary-merge-empty', {
-                characterMessageCount,
-                currentCheckpoint: processedCheckpoint,
-                fallbackUsed: true,
-              });
+              break;
             }
 
-            nextSummaries = [
-              mergedSummary || nextSummaries.slice(0, 10).join('；'),
-              ...nextSummaries.slice(10),
-            ];
-
-            console.log(`[App][Summary] 归并完成，当前共有${nextSummaries.length}条summary`);
-            appendSummaryDebugLog('summary-merge-finished', {
-              characterMessageCount,
-              currentSummaryCount: nextSummaries.length,
-              currentCheckpoint: processedCheckpoint,
+            processedBigSummaryCheckpoint = targetBigSummaryCheckpoint;
+            nextBigSummaries = [...nextBigSummaries, bigSummary];
+            console.log(`[App][Summary] 大总结生成成功：大总结checkpoint已推进到${processedBigSummaryCheckpoint}，共有${nextBigSummaries.length}条大总结`);
+            appendSummaryDebugLog('big-summary-generated', {
+              dialogueRoundCount,
+              currentSmallSummaryCount: nextSummaries.length,
+              currentBigSummaryCount: nextBigSummaries.length,
+              currentBigSummaryCheckpoint: processedBigSummaryCheckpoint,
+              latestBigSummary: bigSummary,
             });
           }
         }
 
-        if (processedCheckpoint > lastSummaryMessageCount.current) {
+        if (
+          processedCheckpoint > lastSummaryMessageCount.current ||
+          processedBigSummaryCheckpoint > lastBigSummaryCheckpoint.current
+        )
+        {
+          const hasNewBigSummary = processedBigSummaryCheckpoint > lastBigSummaryCheckpoint.current;
           replaceTodaySummaries(nextSummaries);
+          replaceBigSummaries(nextBigSummaries);
           lastSummaryMessageCount.current = processedCheckpoint;
-          console.log(`[App][Summary] 摘要列表已更新，当前最终共有${nextSummaries.length}条summary，checkpoint=${processedCheckpoint}`);
+          lastBigSummaryCheckpoint.current = processedBigSummaryCheckpoint;
+          console.log(`[App][Summary] 摘要列表已更新，小总结=${nextSummaries.length}条，大总结=${nextBigSummaries.length}条，小总结checkpoint=${processedCheckpoint}，大总结checkpoint=${processedBigSummaryCheckpoint}`);
           appendSummaryDebugLog('summary-updated', {
-            characterMessageCount,
+            dialogueRoundCount,
             finalSummaryCount: nextSummaries.length,
             finalCheckpoint: processedCheckpoint,
+            finalBigSummaryCount: nextBigSummaries.length,
+            finalBigSummaryCheckpoint: processedBigSummaryCheckpoint,
           });
+          if (hasNewBigSummary)
+          {
+            showSummaryToast('success', 'big', '大总结生成成功', true);
+          } else
+          {
+            showSummaryToast('success', 'small', '小总结生成成功', true);
+          }
+        } else
+        {
+          hideSummaryToast();
         }
-      } catch (err) {
+      } catch (err)
+      {
+        showSummaryToast('error', 'small', '小总结生成失败', true);
         console.error(`[App][Summary] 本次摘要生成失败：当前已有${todaySummariesRef.current.length}条summary`, err);
         appendSummaryDebugLog('summary-failed', {
-          characterMessageCount,
+          dialogueRoundCount,
           currentSummaryCount: todaySummariesRef.current.length,
           currentCheckpoint: processedCheckpoint,
           error: toLoggableError(err),
         });
         console.error('生成总结失败:', err);
-      } finally {
-        if (summaryGenerationTargetRef.current === nextSummaryCheckpoint) {
+      } finally
+      {
+        if (summaryGenerationTargetRef.current === nextSummaryCheckpoint)
+        {
           summaryGenerationTargetRef.current = null;
         }
       }
@@ -942,18 +1159,26 @@ const AppContent: React.FC = () => {
 
     return () => {
       cancelled = true;
-      if (summaryGenerationTargetRef.current === nextSummaryCheckpoint) {
+      if (summaryGenerationTargetRef.current === nextSummaryCheckpoint)
+      {
         summaryGenerationTargetRef.current = null;
       }
     };
-  }, [messages, settings.mainAI, settings.contentAI, settings.useIndependentContentAI]);
+  }, [backgroundAIConfig, bodyStatus, gameTime, messages, settings.contentAI, settings.mainAI, settings.useIndependentContentAI]);
+
+  useEffect(() => {
+    return () => {
+      clearSummaryToastTimer();
+    };
+  }, []);
 
   // 自动存档：每天早上7点自动保存
   useEffect(() => {
     if (!gameStarted) return;
 
     const shouldSave = shouldAutoSave(gameTime, lastAutoSaveTimeRef.current);
-    if (shouldSave && gameTime.hour >= 7) {
+    if (shouldSave)
+    {
       handleSaveGame(0); // 自动存档到槽位0
       console.log('自动存档已触发');
     }
@@ -961,64 +1186,200 @@ const AppContent: React.FC = () => {
 
   // 设置SillyTavern事件监听，自动同步世界书和预设更新
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const cleanup = setupSillyTavernEventListeners(
-      // 世界书更新回调
-      (worldbookName: string, entries: any[]) => {
-        console.log(`[SillyTavern] 世界书 "${worldbookName}" 已更新，清除缓存`);
+    return setupSillyTavernEventListeners(
+      (worldbookName) => {
+        console.log(`[App] 检测到世界书更新: ${worldbookName}`);
         clearSystemInstructionCache();
       },
-      // 预设变更回调
-      (presetName: string) => {
-        console.log(`[SillyTavern] 预设 "${presetName}" 已变更，清除缓存`);
+      (presetName) => {
+        console.log(`[App] 检测到预设切换: ${presetName}`);
         clearSystemInstructionCache();
       }
     );
-
-    return cleanup;
   }, []);
 
-  // 自动检测是否为手机浏览器，并自动切换到手机模式
-  const [isMobileBrowser, setIsMobileBrowser] = useState(false);
+  const handlePhoneSpendMoney = (amount: number, item: string) => {
+    if (walletBalance >= amount)
+    {
+      setWalletBalance(prev => prev - amount);
+      setWalletTransactions(prev => [{
+        id: Date.now().toString(),
+        name: item,
+        price: amount,
+        date: formatTime(gameTime),
+        type: 'expense'
+      }, ...prev]);
+    } else
+    {
+      alert('余额不足！');
+    }
+  };
 
-  useEffect(() => {
-    const checkMobile = () => {
-      if (typeof window === 'undefined') return;
+  const handlePhoneBuyItem = async (name: string, description: string, price: number) => {
+    if (walletBalance < price)
+    {
+      alert('余额不足！');
+      return;
+    }
 
-      // 使用统一的移动端检测函数
-      const isMobile = checkMobileBrowser();
+    setWalletBalance(prev => prev - price);
+    const itemId = Date.now().toString();
+    setBackpackItems(prev => [{
+      id: itemId,
+      name,
+      description,
+      price,
+      date: formatTime(gameTime),
+      type: 'item'
+    }, ...prev]);
+    setWalletTransactions(prev => [{
+      id: itemId,
+      name: `购买：${name}`,
+      price,
+      date: formatTime(gameTime),
+      type: 'expense'
+    }, ...prev]);
 
-      // 如果是手机设备或小屏幕竖屏，自动切换到手机模式
-      if (isMobile && settings.displayMode === 'desktop') {
-        setIsMobileBrowser(true);
-        // 注意：这里不自动切换displayMode，让用户手动切换，但我们可以优化布局
-      } else {
-        setIsMobileBrowser(false);
-      }
-    };
+    const isWenwanNearby = bodyStatus.location === userLocation;
+    if (isWenwanNearby)
+    {
+      await handleAction(`(System: 哥哥在情趣用品店购买了【${name}】，温婉就在身边看到了。根据当前好感度，生成温婉的反应和对话。她可能会害羞、好奇、或者表现出不同的情绪。如果好感度高，她可能会脸红但接受；如果好感度低，她可能会觉得尴尬或保持距离。)`, true);
+    } else
+    {
+      setMessages(prev => [...prev, {
+        id: itemId,
+        sender: 'system',
+        text: `你购买了【${name}】，已放入背包。`,
+        timestamp: new Date()
+      }]);
+    }
+  };
 
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    window.addEventListener('orientationchange', checkMobile);
+  const handlePhoneEarnMoney = (amount: number, source: string) => {
+    setWalletBalance(prev => prev + amount);
+    setWalletTransactions(prev => [{
+      id: Date.now().toString(),
+      name: source,
+      price: amount,
+      date: formatTime(gameTime),
+      type: 'income'
+    }, ...prev]);
+    alert(`工作完成！获得¥${amount}`);
+  };
 
-    return () => {
-      window.removeEventListener('resize', checkMobile);
-      window.removeEventListener('orientationchange', checkMobile);
-    };
-  }, [settings.displayMode]);
+  const handlePhoneSleep = async () => {
+    const nightTime = { ...gameTime };
+    nightTime.hour = 23;
+    nightTime.minute = 0;
+    setGameTime(nightTime);
+
+    const sleepMessageId = Date.now().toString();
+    setMessages(prev => [...prev, {
+      id: sleepMessageId,
+      sender: 'system',
+      text: '【晚上11点】\n\n你躺在床上，准备入睡...',
+      timestamp: new Date()
+    }]);
+
+    setBodyStatus(prev => ({
+      ...prev,
+      location: 'guest_bedroom'
+    }));
+
+    setTimeout(() => {
+      setShowMidnightChoice(true);
+    }, 800);
+  };
+
+  const handlePhoneEnterGuestRoom = async () => {
+    await handleMoveUser('guest_bedroom', false);
+    setTimeout(() => {
+      setShowGuestRoomOptions(true);
+    }, 800);
+  };
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden text-slate-800 font-sans flex items-center justify-center" style={{
-      height: '100dvh', // 使用动态视口高度，适配手机浏览器
-      minHeight: '-webkit-fill-available' // iOS Safari支持
-    } as React.CSSProperties}>
+    <div
+      className="relative flex h-screen w-screen items-center justify-center overflow-hidden font-sans text-slate-800"
+      style={{
+        height: '100dvh',
+        minHeight: '-webkit-fill-available'
+      } as React.CSSProperties}
+    >
       <Wallpaper />
 
-      {/* Start Screen Overlay */}
-      {!gameStarted && <StartScreen onStart={handleStartGame} onOpenSettings={handleOpenSettings} onLoadGame={handleLoadGame} />}
+      <style>{`
+        @keyframes summaryToastSlideIn {
+          0% {
+            opacity: 0;
+            transform: translate(-50%, -14px) scale(0.96);
+          }
+          100% {
+            opacity: 1;
+            transform: translate(-50%, 0) scale(1);
+          }
+        }
+      `}</style>
 
-      {/* Settings Panel */}
+      {summaryToast.visible && (
+        <div
+          className="pointer-events-none fixed top-4 left-1/2 z-[70] px-4"
+          style={{
+            animation: 'summaryToastSlideIn 220ms cubic-bezier(0.22, 1, 0.36, 1)'
+          }}
+        >
+          <div className={`flex min-w-[280px] items-center gap-3 rounded-[28px] border px-3 py-3 shadow-[0_16px_40px_rgba(190,24,93,0.18)] backdrop-blur-2xl transition-all duration-300 ${summaryToast.type === 'error'
+            ? 'border-rose-100/80 bg-gradient-to-r from-pink-200/82 via-rose-100/74 to-pink-300/76 text-rose-950'
+            : summaryToast.type === 'success'
+              ? 'border-pink-50/85 bg-gradient-to-r from-pink-100/84 via-rose-50/78 to-pink-200/80 text-rose-900'
+              : 'border-pink-50/85 bg-gradient-to-r from-pink-100/78 via-white/62 to-rose-100/76 text-rose-900'
+            }`}>
+            <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full border shadow-inner ${summaryToast.stage === 'small'
+              ? 'border-pink-200/70 bg-white/58 text-pink-600'
+              : 'border-rose-200/70 bg-white/54 text-rose-600'
+              }`}>
+              {summaryToast.stage === 'small' ? <FileText size={18} strokeWidth={2.2} /> : <Layers3 size={18} strokeWidth={2.2} />}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.2em] uppercase text-rose-700/75">
+                <span>{summaryToast.stage === 'small' ? '小总结' : '大总结'}</span>
+                <span className="h-[4px] w-[4px] rounded-full bg-rose-400/70" />
+                <span>{summaryToast.type === 'loading' ? '处理中' : summaryToast.type === 'success' ? '已完成' : '失败'}</span>
+              </div>
+              <div className="mt-1 truncate text-sm font-semibold sm:text-[15px]">
+                {summaryToast.message}
+              </div>
+            </div>
+
+            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${summaryToast.type === 'error'
+              ? 'bg-rose-500/14 text-rose-600'
+              : summaryToast.type === 'success'
+                ? 'bg-pink-500/14 text-pink-600'
+                : 'bg-white/45 text-pink-500'
+              }`}>
+              {summaryToast.type === 'loading' ? (
+                <Loader2 size={17} className="animate-spin" strokeWidth={2.2} />
+              ) : summaryToast.type === 'success' ? (
+                <CheckCircle2 size={17} strokeWidth={2.2} />
+              ) : (
+                <AlertCircle size={17} strokeWidth={2.2} />
+              )}
+            </div>
+          </div>
+          <div className="mx-auto mt-2 h-1.5 w-24 rounded-full bg-white/28 backdrop-blur-sm" />
+          <div className="mx-auto -mt-1 h-1.5 w-16 rounded-full bg-rose-200/55" />
+        </div>
+      )}
+
+      {!gameStarted && (
+        <StartScreen
+          onStart={handleStartGame}
+          onOpenSettings={handleOpenSettings}
+          onLoadGame={handleLoadGame}
+        />
+      )}
+
       {showSettings && (
         <SettingsPanel
           onClose={handleCloseSettings}
@@ -1026,35 +1387,31 @@ const AppContent: React.FC = () => {
         />
       )}
 
-      {/* 半夜选择弹窗（是否潜入妹妹房间） */}
       {showMidnightChoice && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
-            <h3 className="text-xl font-bold text-gray-800 mb-4">【晚上11点】</h3>
-            <p className="text-gray-600 mb-6">你躺在床上，突然想到温婉就在隔壁房间...</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-xl font-bold text-gray-800">【晚上11点】</h3>
+            <p className="mb-6 text-gray-600">你躺在床上，突然想到温婉就在隔壁房间...</p>
             <div className="space-y-3">
               <button
                 onClick={async () => {
                   setShowMidnightChoice(false);
-                  // 潜入妹妹房间，告诉AI现在是晚上11点并移动位置
                   setUserLocation('guest_bedroom');
                   await handleAction(`(System: 现在是晚上11点（${gameTime.year}年${gameTime.month}月${gameTime.day}日晚上11点），你决定潜入妹妹的房间。User moved to guest_bedroom. Status: Alone. Wenwan is in guest_bedroom sleeping. 生成一段剧情描述，描述你潜入妹妹房间的过程和现在的情况。注意：现在是深夜11点，温婉应该在睡觉。)`, true);
-                  // 显示选项让玩家决定做什么
                   setTimeout(() => {
                     setShowGuestRoomOptions(true);
                   }, 800);
                 }}
-                className="w-full py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700"
+                className="w-full rounded-xl bg-purple-600 py-3 font-bold text-white hover:bg-purple-700"
               >
                 潜入妹妹房间
               </button>
               <button
                 onClick={() => {
                   setShowMidnightChoice(false);
-                  // 继续睡，正常睡觉到第二天早上
                   handleSleepCancel();
                 }}
-                className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700"
+                className="w-full rounded-xl bg-blue-600 py-3 font-bold text-white hover:bg-blue-700"
               >
                 继续睡
               </button>
@@ -1063,20 +1420,18 @@ const AppContent: React.FC = () => {
         </div>
       )}
 
-      {/* 次卧选项弹窗（潜入后让玩家自己决定做什么） */}
       {showGuestRoomOptions && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
-            <h3 className="text-xl font-bold text-gray-800 mb-4">次卧（温婉的房间）</h3>
-            <p className="text-gray-600 mb-6">你已经潜入妹妹的房间，现在可以自由行动。在对话中输入你想做的事情。</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-xl font-bold text-gray-800">次卧（温婉的房间）</h3>
+            <p className="mb-6 text-gray-600">你已经潜入妹妹的房间，现在可以自由行动。在对话中输入你想做的事情。</p>
             <div className="space-y-3">
               <button
                 onClick={() => {
                   setShowGuestRoomOptions(false);
-                  // 进入房间，让玩家在对话中自由行动
                   handleMoveUser('guest_bedroom', false);
                 }}
-                className="w-full py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700"
+                className="w-full rounded-xl bg-purple-600 py-3 font-bold text-white hover:bg-purple-700"
               >
                 进入房间
               </button>
@@ -1091,17 +1446,12 @@ const AppContent: React.FC = () => {
         </div>
       )}
 
-      {/* 根据显示模式切换布局 */}
       {settings.displayMode === 'desktop' ? (
-        /* 电脑模式：3栏布局 */
-        <div className={`flex w-full h-full max-w-[1800px] gap-6 p-6 transition-opacity duration-1000 ${gameStarted ? 'opacity-100' : 'opacity-0'}`}>
-
-          {/* --- LEFT: Character Tachie (Fixed 380px) --- */}
-          <div className="w-[380px] shrink-0 h-full animate-fade-in flex flex-col justify-center">
+        <div className={`flex h-full w-full max-w-[1800px] gap-6 p-6 transition-opacity duration-1000 ${gameStarted ? 'opacity-100' : 'opacity-0'}`}>
+          <div className="flex h-full w-[380px] shrink-0 animate-fade-in flex-col justify-center">
             <CharacterTachie status={bodyStatus} unlockedOutfits={unlockedOutfits} />
           </div>
 
-          {/* --- CENTER: Dialogue Interface (Flexible) --- */}
           <DialogueInterface
             messages={messages}
             input={input}
@@ -1112,7 +1462,6 @@ const AppContent: React.FC = () => {
             onRegenerateMessage={handleRegenerateMessage}
           />
 
-          {/* --- RIGHT: Phone Interface (Fixed 380px) --- */}
           <PhoneInterface
             activeApp={activeApp}
             onCloseApp={handleCloseApp}
@@ -1133,135 +1482,44 @@ const AppContent: React.FC = () => {
             onSkipSixHours={handleSkipSixHours}
             onSkipTwoDays={handleSkipTwoDays}
             onSkipWeek={handleSkipWeek}
-            todaySummary={todaySummary}
+            todaySummary={latestTodaySummary}
+            todaySummaries={todaySummaries}
             onSaveGame={handleSaveGame}
             onLoadGame={handleLoadGame}
             walletBalance={walletBalance}
             walletTransactions={walletTransactions}
-            onSpendMoney={(amount: number, item: string) => {
-              if (walletBalance >= amount) {
-                setWalletBalance(prev => prev - amount);
-                setWalletTransactions(prev => [{
-                  id: Date.now().toString(),
-                  name: item,
-                  price: amount,
-                  date: formatTime(gameTime),
-                  type: 'expense'
-                }, ...prev]);
-              } else {
-                alert('余额不足！');
-              }
-            }}
-            onBuyItem={async (name: string, description: string, price: number) => {
-              if (walletBalance < price) {
-                alert('余额不足！');
-                return;
-              }
-              setWalletBalance(prev => prev - price);
-              const itemId = Date.now().toString();
-              setBackpackItems(prev => [{
-                id: itemId,
-                name,
-                description,
-                price,
-                date: formatTime(gameTime),
-                type: 'item'
-              }, ...prev]);
-              setWalletTransactions(prev => [{
-                id: itemId,
-                name: `购买：${name}`,
-                price,
-                date: formatTime(gameTime),
-                type: 'expense'
-              }, ...prev]);
-
-              // 检查温婉是否在身边
-              const isWenwanNearby = bodyStatus.location === userLocation;
-              if (isWenwanNearby) {
-                // 温婉在身边，生成剧情对话
-                await handleAction(`(System: 哥哥在情趣用品店购买了【${name}】，温婉就在身边看到了。根据当前好感度，生成温婉的反应和对话。她可能会害羞、好奇、或者表现出不同的情绪。如果好感度高，她可能会脸红但接受；如果好感度低，她可能会觉得尴尬或保持距离。)`, true);
-              } else {
-                // 温婉不在身边，简单描述即可
-                setMessages(prev => [...prev, {
-                  id: itemId,
-                  sender: 'system',
-                  text: `你购买了【${name}】，已放入背包。`,
-                  timestamp: new Date()
-                }]);
-              }
-            }}
-            onEarnMoney={(amount: number, source: string) => {
-              setWalletBalance(prev => prev + amount);
-              setWalletTransactions(prev => [{
-                id: Date.now().toString(),
-                name: source,
-                price: amount,
-                date: formatTime(gameTime),
-                type: 'income'
-              }, ...prev]);
-              alert(`工作完成！获得¥${amount}`);
-            }}
-            onSleep={async () => {
-              // 睡觉：跳到晚上11点，然后弹出选择是否潜入妹妹房间
-              const currentTime = gameTime;
-
-              // 先跳到晚上11点
-              const nightTime = { ...gameTime };
-              nightTime.hour = 23;
-              nightTime.minute = 0;
-              setGameTime(nightTime);
-
-              // 确保温婉在次卧（晚上11点她应该在自己的房间睡觉）
-              setBodyStatus(prev => ({
-                ...prev,
-                location: 'guest_bedroom' // 温婉在次卧睡觉
-              }));
-
-              // 添加消息提示
-              const sleepMessageId = Date.now().toString();
-              setMessages(prev => [...prev, {
-                id: sleepMessageId,
-                sender: 'system',
-                text: '【晚上11点】\n\n你躺在床上，准备入睡...',
-                timestamp: new Date()
-              }]);
-
-              // 延迟一下再弹出选择（在游戏内弹窗，不是window.confirm）
-              setTimeout(() => {
-                setShowMidnightChoice(true);
-              }, 800);
-            }}
-            onSleepCancel={handleSleepCancel}
-            onEnterGuestRoom={async () => {
-              // 进入次卧，让玩家自己决定做什么
-              await handleMoveUser('guest_bedroom', false);
-              // 显示选项让玩家决定做什么
-              setTimeout(() => {
-                setShowGuestRoomOptions(true);
-              }, 800);
-            }}
-            status={bodyStatus}
+            onSpendMoney={handlePhoneSpendMoney}
             backpackItems={backpackItems}
+            onBuyItem={handlePhoneBuyItem}
             onBuyClothing={handleBuyClothing}
             onGiftClothing={handleGiftClothingWithAction}
             onUseItem={handleUseItemWithAction}
             onGiftItem={handleGiftItemWithAction}
             unlockedOutfits={unlockedOutfits}
+            onEarnMoney={handlePhoneEarnMoney}
+            onSleep={handlePhoneSleep}
+            onEnterGuestRoom={handlePhoneEnterGuestRoom}
+            onStealUnderwear={handleStealUnderwear}
+            onSleepCancel={handleSleepCancel}
+            status={bodyStatus}
             advance={advance}
           />
         </div>
       ) : (
-        /* 手机模式：优化的侧边栏抽屉式设计 */
-        <div className={`relative w-full h-full overflow-hidden transition-opacity duration-1000 ${gameStarted ? 'opacity-100' : 'opacity-0'}`} style={{
-          height: '100dvh', // 使用动态视口高度
-          minHeight: '-webkit-fill-available' // iOS Safari支持
-        } as React.CSSProperties}>
-
-          {/* --- 主聊天区域（全屏显示，可滚动） --- */}
-          <div className="absolute inset-0 flex flex-col overflow-hidden bg-gradient-to-br from-pink-50/30 via-purple-50/20 to-blue-50/30" style={{
+        <div
+          className={`relative h-full w-full overflow-hidden transition-opacity duration-1000 ${gameStarted ? 'opacity-100' : 'opacity-0'}`}
+          style={{
             height: '100dvh',
             minHeight: '-webkit-fill-available'
-          } as React.CSSProperties}>
+          } as React.CSSProperties}
+        >
+          <div
+            className="absolute inset-0 flex flex-col overflow-hidden bg-gradient-to-br from-pink-50/30 via-purple-50/20 to-blue-50/30"
+            style={{
+              height: '100dvh',
+              minHeight: '-webkit-fill-available'
+            } as React.CSSProperties}
+          >
             <DialogueInterface
               messages={messages}
               input={input}
@@ -1273,69 +1531,59 @@ const AppContent: React.FC = () => {
             />
           </div>
 
-          {/* --- 左侧浮动按钮栏（固定在左侧中间，更美观） --- */}
-          <div className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-3">
-            {/* 立绘按钮 */}
+          <div className="absolute left-2 top-1/2 z-30 flex -translate-y-1/2 flex-col gap-3 sm:left-4">
             <button
               onClick={() => {
-                // 如果当前显示的是立绘，则关闭；否则打开立绘并关闭手机
-                if (activeApp === 'tachie') {
+                if (activeApp === 'tachie')
+                {
                   setActiveApp(null);
-                } else {
-                  setActiveApp('tachie' as any);
+                } else
+                {
+                  setActiveApp('tachie' as AppID);
                 }
               }}
-              className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center text-2xl sm:text-3xl shadow-xl transition-all duration-300 active:scale-95 touch-manipulation backdrop-blur-md ${activeApp === 'tachie'
-                ? 'bg-gradient-to-br from-pink-500 via-purple-500 to-pink-600 text-white ring-4 ring-pink-300/50 scale-110'
-                : 'bg-white/95 text-gray-700 border-2 border-gray-300/50 hover:bg-white hover:shadow-2xl hover:scale-105'
+              className={`flex h-14 w-14 items-center justify-center rounded-2xl text-2xl shadow-xl transition-all duration-300 active:scale-95 touch-manipulation backdrop-blur-md sm:h-16 sm:w-16 sm:text-3xl ${activeApp === 'tachie'
+                ? 'scale-110 bg-gradient-to-br from-pink-500 via-purple-500 to-pink-600 text-white ring-4 ring-pink-300/50'
+                : 'border-2 border-gray-300/50 bg-white/95 text-gray-700 hover:scale-105 hover:bg-white hover:shadow-2xl'
                 }`}
               title="立绘"
             >
-              🎨
+              绘
             </button>
 
-            {/* 手机按钮 */}
             <button
               onClick={() => {
-                // 如果当前显示的是手机，则关闭；否则打开手机并关闭立绘
                 const isPhoneOpen = activeApp !== null && activeApp !== 'tachie';
-                if (isPhoneOpen) {
+                if (isPhoneOpen)
+                {
                   setActiveApp(null);
-                } else {
+                } else
+                {
                   setActiveApp(AppID.HOME);
                 }
               }}
-              className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center text-2xl sm:text-3xl shadow-xl transition-all duration-300 active:scale-95 touch-manipulation backdrop-blur-md ${activeApp !== null && activeApp !== 'tachie'
-                ? 'bg-gradient-to-br from-blue-500 via-indigo-500 to-blue-600 text-white ring-4 ring-blue-300/50 scale-110'
-                : 'bg-white/95 text-gray-700 border-2 border-gray-300/50 hover:bg-white hover:shadow-2xl hover:scale-105'
+              className={`flex h-14 w-14 items-center justify-center rounded-2xl text-2xl shadow-xl transition-all duration-300 active:scale-95 touch-manipulation backdrop-blur-md sm:h-16 sm:w-16 sm:text-3xl ${activeApp !== null && activeApp !== 'tachie'
+                ? 'scale-110 bg-gradient-to-br from-blue-500 via-indigo-500 to-blue-600 text-white ring-4 ring-blue-300/50'
+                : 'border-2 border-gray-300/50 bg-white/95 text-gray-700 hover:scale-105 hover:bg-white hover:shadow-2xl'
                 }`}
               title="手机"
             >
-              📱
+              机
             </button>
           </div>
 
-          {/* --- 遮罩层（侧边栏打开时显示） --- */}
           <div
-            className={`absolute inset-0 bg-black/40 backdrop-blur-sm z-35 transition-opacity duration-300 ${activeApp !== null
-              ? 'opacity-100 pointer-events-auto'
-              : 'opacity-0 pointer-events-none'
-              }`}
+            className={`absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity duration-300 ${activeApp !== null ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}
             onClick={() => setActiveApp(null)}
           />
 
-          {/* --- 立绘侧边栏（从左侧滑入，优化动画和样式） --- */}
-          <div className={`absolute left-0 top-0 bottom-0 w-[85vw] sm:w-[420px] max-w-[90vw] z-40 bg-gradient-to-br from-white via-pink-50/30 to-purple-50/20 backdrop-blur-2xl shadow-2xl transition-transform duration-300 ease-out border-r-2 border-pink-200/50 ${activeApp === 'tachie'
-            ? 'translate-x-0'
-            : '-translate-x-full'
-            }`}>
+          <div className={`absolute left-0 top-0 bottom-0 z-40 w-[85vw] max-w-[90vw] border-r-2 border-pink-200/50 bg-gradient-to-br from-white via-pink-50/30 to-purple-50/20 shadow-2xl backdrop-blur-2xl transition-transform duration-300 ease-out sm:w-[420px] ${activeApp === 'tachie' ? 'translate-x-0' : '-translate-x-full'}`}>
             <div className="h-full overflow-y-auto scrollbar-thin scrollbar-thumb-pink-300 scrollbar-track-transparent">
               <CharacterTachie status={bodyStatus} unlockedOutfits={unlockedOutfits} />
             </div>
-            {/* 关闭按钮（优化样式，确保手机端可点击） */}
             <button
               onClick={() => setActiveApp(null)}
-              className="absolute top-2 sm:top-4 right-2 sm:right-4 w-12 h-12 sm:w-11 sm:h-11 rounded-full bg-white/95 backdrop-blur-md border-2 border-pink-200/50 flex items-center justify-center text-gray-600 shadow-xl active:scale-90 transition-all duration-200 touch-manipulation z-[100] hover:bg-pink-50 hover:border-pink-300 hover:text-pink-600"
+              className="absolute top-2 right-2 z-[100] flex h-12 w-12 items-center justify-center rounded-full border-2 border-pink-200/50 bg-white/95 text-gray-600 shadow-xl transition-all duration-200 touch-manipulation active:scale-90 hover:border-pink-300 hover:bg-pink-50 hover:text-pink-600 sm:top-4 sm:right-4 sm:h-11 sm:w-11"
               style={{
                 minWidth: '48px',
                 minHeight: '48px',
@@ -1343,24 +1591,19 @@ const AppContent: React.FC = () => {
                 WebkitTapHighlightColor: 'transparent'
               }}
             >
-              <span className="text-xl sm:text-xl font-bold">✕</span>
+              <span className="text-xl font-bold">✕</span>
             </button>
           </div>
 
-          {/* --- 手机侧边栏（从左侧滑入，优化动画和样式） --- */}
-          <div className={`absolute left-0 top-0 bottom-0 w-[100vw] sm:w-[420px] max-w-[100vw] z-40 bg-gradient-to-br from-white via-blue-50/30 to-indigo-50/20 backdrop-blur-2xl shadow-2xl transition-transform duration-300 ease-out border-r-2 border-blue-200/50 ${activeApp !== null && activeApp !== 'tachie'
-            ? 'translate-x-0'
-            : '-translate-x-full'
-            }`}>
-            <div className="h-full w-full overflow-hidden flex flex-col touch-pan-y">
-              {/* 手机侧边栏关闭按钮 */}
+          <div className={`absolute left-0 top-0 bottom-0 z-40 w-[100vw] max-w-[100vw] border-r-2 border-blue-200/50 bg-gradient-to-br from-white via-blue-50/30 to-indigo-50/20 shadow-2xl backdrop-blur-2xl transition-transform duration-300 ease-out sm:w-[420px] ${activeApp !== null && activeApp !== 'tachie' ? 'translate-x-0' : '-translate-x-full'}`}>
+            <div className="flex h-full w-full flex-col overflow-hidden touch-pan-y">
               <button
                 onClick={() => setActiveApp(null)}
-                className="absolute top-4 right-4 w-11 h-11 rounded-full bg-white/95 backdrop-blur-md border-2 border-blue-200/50 flex items-center justify-center text-gray-600 shadow-xl active:scale-90 transition-all duration-200 touch-manipulation z-50 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600"
+                className="absolute top-4 right-4 z-50 flex h-11 w-11 items-center justify-center rounded-full border-2 border-blue-200/50 bg-white/95 text-gray-600 shadow-xl transition-all duration-200 touch-manipulation active:scale-90 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600"
               >
                 <span className="text-xl font-bold">✕</span>
               </button>
-              <div className="flex-1 overflow-y-auto overflow-x-hidden -webkit-overflow-scrolling-touch scrollbar-thin scrollbar-thumb-blue-300 scrollbar-track-transparent">
+              <div className="scrollbar-thin scrollbar-thumb-blue-300 scrollbar-track-transparent flex-1 overflow-y-auto overflow-x-hidden -webkit-overflow-scrolling-touch">
                 <PhoneInterface
                   activeApp={activeApp === AppID.HOME ? AppID.HOME : (activeApp as AppID)}
                   onCloseApp={() => setActiveApp(null)}
@@ -1381,126 +1624,33 @@ const AppContent: React.FC = () => {
                   onSkipSixHours={handleSkipSixHours}
                   onSkipTwoDays={handleSkipTwoDays}
                   onSkipWeek={handleSkipWeek}
-                  todaySummary={todaySummary}
+                  todaySummary={latestTodaySummary}
+                  todaySummaries={todaySummaries}
                   onSaveGame={handleSaveGame}
                   onLoadGame={handleLoadGame}
                   walletBalance={walletBalance}
                   walletTransactions={walletTransactions}
-                  onSpendMoney={(amount: number, item: string) => {
-                    if (walletBalance >= amount) {
-                      setWalletBalance(prev => prev - amount);
-                      setWalletTransactions(prev => [{
-                        id: Date.now().toString(),
-                        name: item,
-                        price: amount,
-                        date: formatTime(gameTime),
-                        type: 'expense'
-                      }, ...prev]);
-                    } else {
-                      alert('余额不足！');
-                    }
-                  }}
-                  onBuyItem={async (name: string, description: string, price: number) => {
-                    if (walletBalance < price) {
-                      alert('余额不足！');
-                      return;
-                    }
-                    setWalletBalance(prev => prev - price);
-                    const itemId = Date.now().toString();
-                    setBackpackItems(prev => [{
-                      id: itemId,
-                      name,
-                      description,
-                      price,
-                      date: formatTime(gameTime),
-                      type: 'item',
-                    }, ...prev]);
-                    setWalletTransactions(prev => [{
-                      id: itemId,
-                      name: `购买：${name}`,
-                      price,
-                      date: formatTime(gameTime),
-                      type: 'expense'
-                    }, ...prev]);
-
-                    // 检查温婉是否在身边
-                    const isWenwanNearby = bodyStatus.location === userLocation;
-                    if (isWenwanNearby) {
-                      // 温婉在身边，生成剧情对话
-                      await handleAction(`(System: 哥哥在情趣用品店购买了【${name}】，温婉就在身边看到了。根据当前好感度，生成温婉的反应和对话。她可能会害羞、好奇、或者表现出不同的情绪。如果好感度高，她可能会脸红但接受；如果好感度低，她可能会觉得尴尬或保持距离。)`, true);
-                    } else {
-                      // 温婉不在身边，简单描述即可
-                      setMessages(prev => [...prev, {
-                        id: itemId,
-                        sender: 'system',
-                        text: `你购买了【${name}】，已放入背包。`,
-                        timestamp: new Date()
-                      }]);
-                    }
-                  }}
+                  onSpendMoney={handlePhoneSpendMoney}
                   backpackItems={backpackItems}
+                  onBuyItem={handlePhoneBuyItem}
                   onBuyClothing={handleBuyClothing}
-                  onGiftClothing={handleGiftClothing}
+                  onGiftClothing={handleGiftClothingWithAction}
+                  onUseItem={handleUseItemWithAction}
+                  onGiftItem={handleGiftItemWithAction}
                   unlockedOutfits={unlockedOutfits}
-                  onEarnMoney={(amount: number, source: string) => {
-                    setWalletBalance(prev => prev + amount);
-                    setWalletTransactions(prev => [{
-                      id: Date.now().toString(),
-                      name: source,
-                      price: amount,
-                      date: formatTime(gameTime),
-                      type: 'income'
-                    }, ...prev]);
-                    alert(`工作完成！获得¥${amount}`);
-                  }}
-                  onSleep={async () => {
-                    // 睡觉：跳到晚上11点，然后弹出选择
-                    const currentTime = gameTime;
-
-                    // 先跳到晚上11点
-                    const nightTime = { ...gameTime };
-                    nightTime.hour = 23;
-                    nightTime.minute = 0;
-                    setGameTime(nightTime);
-
-                    // 添加消息提示
-                    const sleepMessageId = Date.now().toString();
-                    setMessages(prev => [...prev, {
-                      id: sleepMessageId,
-                      sender: 'system',
-                      text: '【晚上11点】\n\n你躺在床上，准备入睡...',
-                      timestamp: new Date()
-                    }]);
-
-                    // 确保温婉在次卧（晚上11点她应该在自己的房间睡觉）
-                    setBodyStatus(prev => ({
-                      ...prev,
-                      location: 'guest_bedroom' // 温婉在次卧睡觉
-                    }));
-
-                    // 延迟一下再弹出选择（在游戏内弹窗，不是window.confirm）
-                    setTimeout(() => {
-                      setShowMidnightChoice(true);
-                    }, 800);
-                  }}
-                  onEnterGuestRoom={async () => {
-                    // 进入次卧，让玩家自己决定做什么
-                    await handleMoveUser('guest_bedroom', false);
-                    // 显示选项让玩家决定做什么
-                    setTimeout(() => {
-                      setShowGuestRoomOptions(true);
-                    }, 800);
-                  }}
+                  onEarnMoney={handlePhoneEarnMoney}
+                  onSleep={handlePhoneSleep}
+                  onEnterGuestRoom={handlePhoneEnterGuestRoom}
+                  onStealUnderwear={handleStealUnderwear}
                   onSleepCancel={handleSleepCancel}
                   status={bodyStatus}
                   advance={advance}
                 />
               </div>
             </div>
-            {/* 关闭按钮（确保手机端可点击） */}
             <button
               onClick={() => setActiveApp(null)}
-              className="absolute top-2 sm:top-4 right-2 sm:right-4 w-12 h-12 sm:w-10 sm:h-10 rounded-full bg-white/90 backdrop-blur border-2 border-gray-200 flex items-center justify-center text-gray-600 shadow-lg active:scale-90 transition-all touch-manipulation z-[100]"
+              className="absolute top-2 right-2 z-[100] flex h-12 w-12 items-center justify-center rounded-full border-2 border-gray-200 bg-white/90 text-gray-600 shadow-lg transition-all touch-manipulation active:scale-90 sm:top-4 sm:right-4 sm:h-10 sm:w-10"
               style={{
                 minWidth: '48px',
                 minHeight: '48px',
@@ -1512,10 +1662,9 @@ const AppContent: React.FC = () => {
             </button>
           </div>
 
-          {/* --- 遮罩层（点击关闭侧边栏） --- */}
           {(activeApp === 'tachie' || (activeApp !== null && activeApp !== 'tachie')) && (
             <div
-              className="absolute inset-0 bg-black/30 backdrop-blur-sm z-30 transition-opacity duration-300"
+              className="absolute inset-0 z-30 bg-black/30 backdrop-blur-sm transition-opacity duration-300"
               onClick={() => setActiveApp(null)}
             />
           )}

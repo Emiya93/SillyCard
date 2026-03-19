@@ -162,6 +162,11 @@ export interface GameTime {
   };
 }
 
+export interface SummaryEntry {
+  content: string;
+  gameTime: GameTime;
+}
+
 export interface GameState {
   credits: number;
   relationship: number;
@@ -199,10 +204,12 @@ export interface GameSave {
   tweets: Tweet[]; // 推特记录
   calendarEvents: CalendarEvent[]; // 日历事件
   todaySummary: string; // 今日总结
-  todaySummaries?: string[]; // 今日总结列表
-  summaryCheckpoint?: number; // 已成功生成摘要的角色消息checkpoint
+  todaySummaries?: Array<SummaryEntry | string>; // 小总结列表（兼容旧字符串格式）
+  bigSummaries?: string[]; // 大总结列表
+  summaryCheckpoint?: number; // 已成功生成小总结的完整对话轮次checkpoint（每轮=用户发言+角色回复）
+  bigSummaryCheckpoint?: number; // 已成功生成大总结的小总结checkpoint
   walletBalance?: number; // 钱包余额
-  walletTransactions?: Array<{id: string; name: string; price: number; date: string; type: 'expense' | 'income'}>; // 钱包交易记录
+  walletTransactions?: Array<{ id: string; name: string; price: number; date: string; type: 'expense' | 'income' }>; // 钱包交易记录
   backpackItems?: BackpackItem[]; // 背包物品
   unlockedOutfits?: string[]; // 已解锁的服装ID列表
 }

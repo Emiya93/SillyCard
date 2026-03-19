@@ -30,7 +30,7 @@ You MUST respond in valid JSON format with the following structure:
     "arcLight": null,  // 已废弃：当前弧光（保留用于向后兼容，但不影响行为）
     // 已删除：trialPeriod, lastArcLightCheck（试探期系统已移除）
     "yellowHair1": null,  // 黄毛1信息：{ "name": "黄耄"或"猪楠", "type": "rich"或"fat", "active": true } 或 null
-    "yellowHair2": null,  // 黄毛2信息（可以同时存在）
+    "yellowHair2": null,  // 黄毛2信息（双黄毛系统启用后可同时存在）
     "bodyModification": {  // 身体改造状态
       "completed": false,  // 是否已完成改造
       "items": []  // 改造项目：["双乳乳环", "阴蒂环", "小腹淫纹"]
