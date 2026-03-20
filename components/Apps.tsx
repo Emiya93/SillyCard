@@ -121,6 +121,7 @@ interface AppProps {
     onGiftClothing?: (outfitId: string, itemId: string) => void; // 赠送服装给温婉
     onUseItem?: (itemId: string, name: string, description: string) => void; // 使用物品（情趣用品等）
     onGiftItem?: (itemId: string, name: string, description: string) => void; // 赠送物品给温婉
+    onEarnMoney?: (amount: number, source: string, hours?: number) => Promise<void> | void;
     unlockedOutfits?: string[]; // 已解锁的服装ID列表
 }
 
@@ -488,11 +489,37 @@ export const MapsApp: React.FC<AppProps> = ({
     const [showSleepConfirm, setShowSleepConfirm] = useState(false);
     const [showGuestRoomOptions, setShowGuestRoomOptions] = useState(false);
     const [selectedLocation, setSelectedLocation] = useState<{ id: string, name: string } | null>(null);
-    const [selectedFacility, setSelectedFacility] = useState<{ name: string, price?: number, priceForTwo?: number, movieTypes?: string[] } | null>(null);
+    const [selectedFacility, setSelectedFacility] = useState<{ name: string, price?: number, priceForTwo?: number, movieTypes?: string[], description?: string, isWork?: boolean } | null>(null);
     const [expandedLuxuryShop, setExpandedLuxuryShop] = useState(false); // 奢侈品店是否展开
     const [selectedMovieType, setSelectedMovieType] = useState<string | null>(null);
     const [selectedSeatType, setSelectedSeatType] = useState<'normal' | 'vip' | 'couple' | null>(null); // 座位类型：普通座、VIP座、情侣座
     const [viewMode, setViewMode] = useState<'INTERIOR' | 'CITY' | 'FACILITY'>('INTERIOR');
+    const [selectedWorkHours, setSelectedWorkHours] = useState(1);
+    const [workNotice, setWorkNotice] = useState<{ visible: boolean; title: string; message: string } | null>(null);
+    const workNoticeTimerRef = useRef<number | null>(null);
+
+    const clearWorkNoticeTimer = () => {
+        if (workNoticeTimerRef.current !== null)
+        {
+            window.clearTimeout(workNoticeTimerRef.current);
+            workNoticeTimerRef.current = null;
+        }
+    };
+
+    const showWorkNotice = (title: string, message: string) => {
+        clearWorkNoticeTimer();
+        setWorkNotice({ visible: true, title, message });
+        workNoticeTimerRef.current = window.setTimeout(() => {
+            setWorkNotice(prev => prev ? { ...prev, visible: false } : prev);
+            workNoticeTimerRef.current = null;
+        }, 2600);
+    };
+
+    useEffect(() => {
+        return () => {
+            clearWorkNoticeTimer();
+        };
+    }, []);
 
     // Interior Rooms Definition
     const rooms: { id: LocationID; label: string; icon: any; className?: string }[] = [
@@ -641,6 +668,10 @@ export const MapsApp: React.FC<AppProps> = ({
                 description: facility.description,
                 isWork: facility.isWork
             });
+            if (facility.isWork)
+            {
+                setSelectedWorkHours(1);
+            }
             if (facility.movieTypes)
             {
                 setSelectedMovieType(null); // 重置电影类型选择
@@ -684,7 +715,14 @@ export const MapsApp: React.FC<AppProps> = ({
         }
     };
 
-    const confirmFacilityAction = (inviteSister: boolean) => {
+    const closeFacilityModal = () => {
+        setSelectedFacility(null);
+        setSelectedMovieType(null);
+        setSelectedSeatType(null);
+        setSelectedWorkHours(1);
+    };
+
+    const confirmFacilityAction = async (inviteSister: boolean) => {
         if (selectedFacility && userLocation && onMoveUser)
         {
             // 如果是购票处，需要先选择电影类型和座位类型
@@ -693,19 +731,19 @@ export const MapsApp: React.FC<AppProps> = ({
                 return; // 不执行，等待选择电影类型和座位类型
             }
 
-            // 如果是工作，给钱并推进时间（工作1小时）
+            // 如果是工作，先选择时长，再统一结算收入并推进时间
             if (selectedFacility.isWork && selectedFacility.price && onEarnMoney)
             {
-                onEarnMoney(selectedFacility.price, selectedFacility.name);
-                // 工作1小时，推进60分钟
+                const hours = Math.min(12, Math.max(1, selectedWorkHours));
+                const earnedAmount = selectedFacility.price * hours;
+
+                await onEarnMoney(earnedAmount, selectedFacility.name, hours);
                 if (advance)
                 {
-                    advance(60);
+                    advance(hours * 60);
                 }
-                // 工作不需要移动，直接关闭弹窗
-                setSelectedFacility(null);
-                setSelectedMovieType(null);
-                setSelectedSeatType(null);
+                showWorkNotice('打工完成', `${selectedFacility.name} ${hours} 小时，收入 ¥${earnedAmount}`);
+                closeFacilityModal();
                 return;
             }
 
@@ -715,8 +753,7 @@ export const MapsApp: React.FC<AppProps> = ({
                 if (walletBalance >= selectedFacility.price)
                 {
                     onBuyItem(selectedFacility.name, selectedFacility.description, selectedFacility.price);
-                    setSelectedFacility(null);
-                    setSelectedMovieType(null);
+                    closeFacilityModal();
                     return;
                 } else
                 {
@@ -778,9 +815,7 @@ export const MapsApp: React.FC<AppProps> = ({
             const facilityName = `${selectedFacility.name}${selectedMovieType ? ` - ${selectedMovieType}` : ''}${seatName ? ` - ${seatName}` : ''}`;
 
             onMoveUser(userLocation, inviteSister, true, facilityName);
-            setSelectedFacility(null);
-            setSelectedMovieType(null);
-            setSelectedSeatType(null);
+            closeFacilityModal();
         }
     };
 
@@ -835,6 +870,22 @@ export const MapsApp: React.FC<AppProps> = ({
 
     return (
         <div className="flex flex-col h-full bg-[#f5f5f7] relative overflow-hidden">
+            {workNotice?.visible && (
+                <div className="pointer-events-none absolute inset-x-0 top-4 z-[60] flex justify-center px-4">
+                    <div className="w-full max-w-[320px] rounded-[26px] border border-emerald-100/80 bg-gradient-to-r from-emerald-100/90 via-white/85 to-green-100/90 px-4 py-3 text-emerald-950 shadow-[0_16px_40px_rgba(16,185,129,0.18)] backdrop-blur-xl">
+                        <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/80 text-emerald-600 shadow-inner">
+                                <Briefcase size={18} strokeWidth={2.2} />
+                            </div>
+                            <div className="min-w-0">
+                                <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-700/80">{workNotice.title}</div>
+                                <div className="mt-1 truncate text-sm font-semibold">{workNotice.message}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <Header
                 title={viewMode === 'INTERIOR' ? "我的家" : viewMode === 'FACILITY' ? "当前地点" : "城市导航"}
                 onClose={onClose}
@@ -1100,21 +1151,50 @@ export const MapsApp: React.FC<AppProps> = ({
                             {/* 价格显示（非购票处） */}
                             {selectedFacility?.price && !selectedFacility.movieTypes && (
                                 <div className="mb-4 p-3 bg-orange-50 rounded-xl border border-orange-200">
-                                    <div className="text-sm text-gray-600 mb-1">费用：</div>
+                                    <div className="text-sm text-gray-600 mb-1">{selectedFacility.isWork ? '收益：' : '费用：'}</div>
                                     <div className="text-lg font-bold text-orange-600">
-                                        {selectedFacility.priceForTwo
+                                        {selectedFacility.isWork
+                                            ? `¥${selectedFacility.price}/小时`
+                                            : selectedFacility.priceForTwo
                                             ? `单人 ¥${selectedFacility.price} / 双人 ¥${selectedFacility.priceForTwo}`
                                             : `¥${selectedFacility.price}/人`}
                                     </div>
                                 </div>
                             )}
 
+                            {selectedFacility?.isWork && selectedFacility.price && (
+                                <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                                    <div className="mb-2 text-sm font-medium text-emerald-800">选择打工时长</div>
+                                    <div className="grid grid-cols-4 gap-2">
+                                        {Array.from({ length: 12 }, (_, index) => {
+                                            const hours = index + 1;
+                                            const isSelected = selectedWorkHours === hours;
+                                            return (
+                                                <button
+                                                    key={hours}
+                                                    onClick={() => setSelectedWorkHours(hours)}
+                                                    className={`rounded-xl px-3 py-2 text-sm font-bold transition-all ${isSelected
+                                                        ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200'
+                                                        : 'bg-white text-emerald-800 hover:bg-emerald-100'
+                                                        }`}
+                                                >
+                                                    {hours}h
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                    <div className="mt-3 rounded-xl bg-white/80 px-3 py-2 text-sm text-emerald-900">
+                                        本次预计收入 <span className="font-bold">¥{selectedFacility.price * selectedWorkHours}</span>，耗时 <span className="font-bold">{selectedWorkHours}</span> 小时
+                                    </div>
+                                </div>
+                            )}
+
                             <p className="text-gray-500 text-sm mb-6">
-                                {selectedLocation ? "室外移动将消耗较多时间。" : "这将触发特殊剧情互动。"}
+                                {selectedLocation ? "室外移动将消耗较多时间。" : selectedFacility?.isWork ? "确认后会在手机内结算收入，并像其他行动一样触发一段新的剧情回复。" : "这将触发特殊剧情互动。"}
                             </p>
 
                             <div className="space-y-3">
-                                {canInviteSister && (
+                                {canInviteSister && !selectedFacility?.isWork && (
                                     <button
                                         onClick={() => selectedLocation ? confirmMove(true) : confirmFacilityAction(true)}
                                         disabled={selectedFacility?.movieTypes && (!selectedMovieType || !selectedSeatType)}
@@ -1136,15 +1216,13 @@ export const MapsApp: React.FC<AppProps> = ({
                                             : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'
                                         }`}
                                 >
-                                    {selectedLocation ? "独自前往" : "独自进行"}
+                                    {selectedLocation ? "独自前往" : selectedFacility?.isWork ? `开始打工 ${selectedWorkHours} 小时` : "独自进行"}
                                 </button>
 
                                 <button
                                     onClick={() => {
                                         setSelectedLocation(null);
-                                        setSelectedFacility(null);
-                                        setSelectedMovieType(null);
-                                        setSelectedSeatType(null);
+                                        closeFacilityModal();
                                     }}
                                     className="w-full py-3 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200"
                                 >

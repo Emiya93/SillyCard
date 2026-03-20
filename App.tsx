@@ -1334,16 +1334,34 @@ const AppContent: React.FC = () => {
     }
   };
 
-  const handlePhoneEarnMoney = (amount: number, source: string) => {
+  const handlePhoneEarnMoney = async (amount: number, source: string, hours: number = 1) => {
+    const startTime = cloneGameTime(gameTime);
+    const endTime = calculateAdvancedTime(gameTime, hours * 60);
+
     setWalletBalance(prev => prev + amount);
+    const transactionId = Date.now().toString();
     setWalletTransactions(prev => [{
-      id: Date.now().toString(),
+      id: transactionId,
       name: source,
       price: amount,
-      date: formatTime(gameTime),
+      date: formatTime(endTime),
       type: 'income'
     }, ...prev]);
-    alert(`工作完成！获得¥${amount}`);
+    const timeRange = `${String(startTime.hour).padStart(2, '0')}:${String(startTime.minute).padStart(2, '0')} - ${String(endTime.hour).padStart(2, '0')}:${String(endTime.minute).padStart(2, '0')}`;
+
+    try
+    {
+      await handleAction(`(System: 哥哥在${source}连续打工了${hours}小时，时间从${startTime.year}年${startTime.month}月${startTime.day}日 ${timeRange}，一共赚到¥${amount}。现在时间已经推进到${endTime.year}年${endTime.month}月${endTime.day}日 ${String(endTime.hour).padStart(2, '0')}:${String(endTime.minute).padStart(2, '0')}。生成一段打工结束后的后续剧情，描述现场状态、哥哥当前状态，以及温婉此刻的情况。表现方式要和其他地点行动一样自然，给出完整回复。)`, true);
+    } catch (error)
+    {
+      console.error('打工后的剧情生成失败:', error);
+      setMessages(prev => [...prev, {
+        id: `${transactionId}-work`,
+        sender: 'system',
+        text: `你在${source}打工了${hours}小时，赚到了¥${amount}。现在是${endTime.year}年${endTime.month}月${endTime.day}日 ${String(endTime.hour).padStart(2, '0')}:${String(endTime.minute).padStart(2, '0')}。`,
+        timestamp: new Date(),
+      }]);
+    }
   };
 
   const handlePhoneSleep = async () => {

@@ -295,47 +295,49 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                                     </div>
 
                                     {/* 接口地址 */}
-                                    <div className="bg-white/80 rounded-xl border border-blue-100 p-4">
-                                        <div className="flex items-start justify-between gap-4">
-                                            <div className="min-w-0">
-                                                <label className="block text-sm font-semibold text-gray-800">
-                                                    Debug log for real I/O
+                                    {false && (
+                                        <div className="bg-white/80 rounded-xl border border-blue-100 p-4">
+                                            <div className="flex items-start justify-between gap-4">
+                                                <div className="min-w-0">
+                                                    <label className="block text-sm font-semibold text-gray-800">
+                                                        Debug log for real I/O
+                                                    </label>
+                                                    <p className="text-xs text-gray-600 mt-1 leading-relaxed">
+                                                        Save real user input, final model payload, raw model output, and cleaned reply into local log storage instead of the browser console.
+                                                    </p>
+                                                    <p className="text-xs text-gray-500 mt-2">
+                                                        Saved entries: {debugLogCount}
+                                                    </p>
+                                                </div>
+                                                <label className="inline-flex items-center gap-2 shrink-0">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={debugLoggingEnabled}
+                                                        onChange={(e) => setDebugLoggingEnabled(e.target.checked)}
+                                                        className="h-5 w-5 accent-blue-600"
+                                                    />
                                                 </label>
-                                                <p className="text-xs text-gray-600 mt-1 leading-relaxed">
-                                                    Save real user input, final model payload, raw model output, and cleaned reply into local log storage instead of the browser console.
-                                                </p>
-                                                <p className="text-xs text-gray-500 mt-2">
-                                                    Saved entries: {debugLogCount}
-                                                </p>
                                             </div>
-                                            <label className="inline-flex items-center gap-2 shrink-0">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={debugLoggingEnabled}
-                                                    onChange={(e) => setDebugLoggingEnabled(e.target.checked)}
-                                                    className="h-5 w-5 accent-blue-600"
-                                                />
-                                            </label>
+                                            <div className="mt-4 flex flex-wrap gap-2">
+                                                <button
+                                                    onClick={handleDownloadDebugLogs}
+                                                    disabled={debugLogCount === 0}
+                                                    className="px-4 py-2 bg-slate-700 hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-full text-sm font-semibold flex items-center gap-2 transition-all"
+                                                >
+                                                    <FileText size={16} />
+                                                    <span>Export logs</span>
+                                                </button>
+                                                <button
+                                                    onClick={handleClearDebugLogs}
+                                                    disabled={debugLogCount === 0}
+                                                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed text-slate-700 rounded-full text-sm font-semibold flex items-center gap-2 transition-all"
+                                                >
+                                                    <RotateCcw size={16} />
+                                                    <span>Clear logs</span>
+                                                </button>
+                                            </div>
                                         </div>
-                                        <div className="mt-4 flex flex-wrap gap-2">
-                                            <button
-                                                onClick={handleDownloadDebugLogs}
-                                                disabled={debugLogCount === 0}
-                                                className="px-4 py-2 bg-slate-700 hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-full text-sm font-semibold flex items-center gap-2 transition-all"
-                                            >
-                                                <FileText size={16} />
-                                                <span>Export logs</span>
-                                            </button>
-                                            <button
-                                                onClick={handleClearDebugLogs}
-                                                disabled={debugLogCount === 0}
-                                                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed text-slate-700 rounded-full text-sm font-semibold flex items-center gap-2 transition-all"
-                                            >
-                                                <RotateCcw size={16} />
-                                                <span>Clear logs</span>
-                                            </button>
-                                        </div>
-                                    </div>
+                                    )}
 
                                     <div>
                                         <label className="block text-sm font-semibold text-gray-700 mb-2">

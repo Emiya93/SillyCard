@@ -41,7 +41,7 @@ interface PhoneInterfaceProps {
     onUseItem?: (itemId: string, name: string, description: string) => void; // 使用物品（情趣用品等）
     onGiftItem?: (itemId: string, name: string, description: string) => void; // 赠送物品给温婉
     unlockedOutfits?: string[]; // 已解锁服装
-    onEarnMoney?: (amount: number, source: string) => void;
+    onEarnMoney?: (amount: number, source: string, hours?: number) => Promise<void> | void;
     onSleep?: () => void;
     onEnterGuestRoom?: () => void;
     onStealUnderwear?: () => void;
@@ -150,6 +150,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
                     userLocation={userLocation}
                     sisterLocation={sisterLocation}
                     onMoveUser={onMoveUser}
+                    onAction={onAction}
                     onSpendMoney={onSpendMoney}
                     onBuyItem={onBuyItem}
                     onEarnMoney={onEarnMoney}

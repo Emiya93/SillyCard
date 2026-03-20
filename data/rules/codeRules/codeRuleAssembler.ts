@@ -4,7 +4,7 @@
  */
 
 import { CHARACTER_PROFILE_RULES } from './characterProfileRules';
-import { BEHAVIOR_RULES } from './behaviorRules';
+import { buildBehaviorRules } from './behaviorRules';
 import { GAMEPLAY_LOGIC_RULES } from './gameplayLogicRules';
 import { RESPONSE_FORMAT_RULES } from './responseFormatRules';
 import { EMOTION_CLOTHING_RULES } from './emotionClothingRules';
@@ -15,12 +15,12 @@ import { TIME_SCHEDULE_RULES } from './timeScheduleRules';
 /**
  * 组装基础代码层规则
  * 这些规则是固定的，不随游戏状态变化
- * 注意：behaviorRules已经整合了好感度、堕落度和黄毛系统，替代了原来的弧光系统
+ * 注意：behaviorRules会根据当前好感度、堕落度动态裁剪，只保留当前阶段需要的行为规则
  */
-export function assembleCodeRules(): string {
+export function assembleCodeRules(favorability?: number, degradation?: number): string {
   const rules = [
     CHARACTER_PROFILE_RULES,
-    BEHAVIOR_RULES,  // 行为规则系统（整合好感度+堕落度+黄毛系统，已包含favorabilityRules的内容）
+    buildBehaviorRules(favorability, degradation),
     TIME_SCHEDULE_RULES,
     LOCATION_INTERACTION_RULES,
     SOCIAL_MEDIA_RULES,

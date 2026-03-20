@@ -27,8 +27,6 @@ You MUST respond in valid JSON format with the following structure:
     "groin": { "level": 0, "usageCount": 0, "status": "未开发", "clothing": "纯棉白色内裤", "lastUsedBy": "无", "usageProcess": "暂无记录" },
     "posterior": { "level": 0, "usageCount": 0, "status": "未开发", "clothing": "无", "lastUsedBy": "无", "usageProcess": "暂无记录" },
     "feet": { "level": 0, "usageCount": 0, "status": "未开发", "clothing": "赤足", "lastUsedBy": "无", "usageProcess": "暂无记录" },
-    "arcLight": null,  // 已废弃：当前弧光（保留用于向后兼容，但不影响行为）
-    // 已删除：trialPeriod, lastArcLightCheck（试探期系统已移除）
     "yellowHair1": null,  // 黄毛1信息：{ "name": "黄耄"或"猪楠", "type": "rich"或"fat", "active": true } 或 null
     "yellowHair2": null,  // 黄毛2信息（双黄毛系统启用后可同时存在）
     "bodyModification": {  // 身体改造状态
