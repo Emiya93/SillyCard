@@ -358,13 +358,16 @@ const AppContent: React.FC = () => {
 
   // 正常睡觉到第二天早上
   const handleSleepCancel = async () => {
-    const oldTime = { ...gameTime };
     // 跳到第二天早上7点
     const nextMorning = calculateSkippedTime(gameTime, 1);
     setGameTime(nextMorning);
 
     // 使用 handleAction 生成AI剧情，就像"前往电影院"一样
-    await handleAction(`(System: 你正常睡觉，睡到了第二天早上。时间已经流逝了1天，现在是${nextMorning.year}年${nextMorning.month}月${nextMorning.day}日的早上7点。生成一段剧情描述，描述现在（第二天早上）的情况。温婉在哪里、在做什么、心情如何。就像描述"前往电影院"一样，生成完整的剧情场景。)`, true);
+    await handleAction(
+      `(System: 你正常睡觉，睡到了第二天早上。时间已经流逝了1天，现在是${nextMorning.year}年${nextMorning.month}月${nextMorning.day}日的早上7点。生成一段剧情描述，描述现在（第二天早上）的情况。温婉在哪里、在做什么、心情如何。就像描述"前往电影院"一样，生成完整的剧情场景。)`,
+      true,
+      { overrideGameTime: nextMorning },
+    );
   };
 
   // 偷内衣处理函数（保留但不再使用）
@@ -910,7 +913,8 @@ const AppContent: React.FC = () => {
 
     await handleAction(
       `(System: 时间已经流逝了${label}，现在是${newTime.year}年${newTime.month}月${newTime.day}日${formatTime(newTime)}。生成一段剧情描述，描述这${label}里发生的事情，以及现在的情况。温婉在哪里、在做什么、心情如何。就像描述"前往电影院"一样，生成完整的剧情场景。)`,
-      true
+      true,
+      { overrideGameTime: newTime },
     );
   };
 
@@ -970,18 +974,20 @@ const AppContent: React.FC = () => {
   };
 
   const handleSkipTwoDays = async () => {
-    const oldTime = { ...gameTime };
     const newTime = calculateSkippedTime(gameTime, 1);
     skipToday(); // 跳到第二天早上7点（原来是skipTwoDays，现在改为skipToday，推进1天）
 
     // 跳过1天不减少好感度（只有跳过3天才减少）
 
     // 使用 handleAction 生成AI剧情
-    await handleAction(`(System: 时间已经流逝了1天，现在是${newTime.year}年${newTime.month}月${newTime.day}日的早上7点。生成一段剧情描述，描述这1天里发生的事情，以及现在（第二天早上）的情况。温婉在哪里、在做什么、心情如何。就像描述"前往电影院"一样，生成完整的剧情场景。)`, true);
+    await handleAction(
+      `(System: 时间已经流逝了1天，现在是${newTime.year}年${newTime.month}月${newTime.day}日的早上7点。生成一段剧情描述，描述这1天里发生的事情，以及现在（第二天早上）的情况。温婉在哪里、在做什么、心情如何。就像描述"前往电影院"一样，生成完整的剧情场景。)`,
+      true,
+      { overrideGameTime: newTime },
+    );
   };
 
   const handleSkipWeek = async () => {
-    const oldTime = { ...gameTime };
     // 推进3天（原来是7天）
     const newTime = calculateSkippedTime(gameTime, 3);
 
@@ -1017,7 +1023,11 @@ const AppContent: React.FC = () => {
     });
 
     // 使用 handleAction 生成AI剧情
-    await handleAction(`(System: 时间已经流逝了3天，现在是${newTime.year}年${newTime.month}月${newTime.day}日的早上7点。生成一段剧情描述，描述这3天里发生的事情，以及现在（第四天早上）的情况。温婉在哪里、在做什么、心情如何。就像描述"前往电影院"一样，生成完整的剧情场景。)`, true);
+    await handleAction(
+      `(System: 时间已经流逝了3天，现在是${newTime.year}年${newTime.month}月${newTime.day}日的早上7点。生成一段剧情描述，描述这3天里发生的事情，以及现在（第四天早上）的情况。温婉在哪里、在做什么、心情如何。就像描述"前往电影院"一样，生成完整的剧情场景。)`,
+      true,
+      { overrideGameTime: newTime },
+    );
   };
 
   // 不再需要监听时间变化生成剧情，因为现在直接使用 handleAction 生成
@@ -1351,7 +1361,11 @@ const AppContent: React.FC = () => {
 
     try
     {
-      await handleAction(`(System: 哥哥在${source}连续打工了${hours}小时，时间从${startTime.year}年${startTime.month}月${startTime.day}日 ${timeRange}，一共赚到¥${amount}。现在时间已经推进到${endTime.year}年${endTime.month}月${endTime.day}日 ${String(endTime.hour).padStart(2, '0')}:${String(endTime.minute).padStart(2, '0')}。生成一段打工结束后的后续剧情，描述现场状态、哥哥当前状态，以及温婉此刻的情况。表现方式要和其他地点行动一样自然，给出完整回复。)`, true);
+      await handleAction(
+        `(System: 哥哥在${source}连续打工了${hours}小时，时间从${startTime.year}年${startTime.month}月${startTime.day}日 ${timeRange}，一共赚到¥${amount}。现在时间已经推进到${endTime.year}年${endTime.month}月${endTime.day}日 ${String(endTime.hour).padStart(2, '0')}:${String(endTime.minute).padStart(2, '0')}。生成一段打工结束后的后续剧情，描述现场状态、哥哥当前状态，以及温婉此刻的情况。表现方式要和其他地点行动一样自然，给出完整回复。)`,
+        true,
+        { overrideGameTime: endTime },
+      );
     } catch (error)
     {
       console.error('打工后的剧情生成失败:', error);

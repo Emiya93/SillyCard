@@ -172,6 +172,10 @@ interface UseDialogueProps {
   ) => Promise<void> | void; // 赠送服装函数
 }
 
+type HandleActionOptions = {
+  overrideGameTime?: GameTime;
+};
+
 export const useDialogue = ({
   messages,
   bodyStatus,
@@ -201,7 +205,12 @@ export const useDialogue = ({
   const [isLoading, setIsLoading] = useState(false);
   const isHandlingActionRef = useRef(false);
   // 保存最后一次的操作，用于重新生成
-  const lastActionRef = useRef<{ actionText: string; isSystemAction: boolean; actionMessageId?: string } | null>(null);
+  const lastActionRef = useRef<{
+    actionText: string;
+    isSystemAction: boolean;
+    actionMessageId?: string;
+    options?: HandleActionOptions;
+  } | null>(null);
 
   const advanceGameTimeSnapshot = (time: GameTime, minutes: number): GameTime => {
     const nextDate = new Date(
@@ -254,7 +263,11 @@ export const useDialogue = ({
   };
 
   // 处理用户操作 - 这是核心的对话处理函数
-  const handleAction = async (actionText: string, isSystemAction = false) => {
+  const handleAction = async (
+    actionText: string,
+    isSystemAction = false,
+    options?: HandleActionOptions,
+  ) => {
     const normalizedActionText = isSystemAction ? actionText : actionText.trim();
     if (!normalizedActionText) return;
     if (isLoading || isHandlingActionRef.current) return;
@@ -263,7 +276,11 @@ export const useDialogue = ({
 
     try
     {
-      let effectiveGameTime = gameTime ? { ...gameTime } : undefined;
+      let effectiveGameTime = options?.overrideGameTime
+        ? { ...options.overrideGameTime }
+        : gameTime
+          ? { ...gameTime }
+          : undefined;
       const advanceGameClock = (minutes: number) => {
         if (advance)
         {
@@ -277,7 +294,7 @@ export const useDialogue = ({
       };
 
       // 保存当前操作，用于重新生成
-      lastActionRef.current = { actionText: normalizedActionText, isSystemAction };
+      lastActionRef.current = { actionText: normalizedActionText, isSystemAction, options };
 
       // 检测购物操作
       if (normalizedActionText.includes("购买了商品"))
@@ -301,7 +318,7 @@ export const useDialogue = ({
           },
         ]);
         // 更新最后一次操作记录，包含用户消息ID
-        lastActionRef.current = { actionText: normalizedActionText, isSystemAction, actionMessageId };
+        lastActionRef.current = { actionText: normalizedActionText, isSystemAction, actionMessageId, options };
       } else
       {
         // 系统操作也更新记录
@@ -317,7 +334,7 @@ export const useDialogue = ({
             isHidden: true,
           },
         ]);
-        lastActionRef.current = { actionText: normalizedActionText, isSystemAction, actionMessageId };
+        lastActionRef.current = { actionText: normalizedActionText, isSystemAction, actionMessageId, options };
       }
 
       // 如果不是系统操作，检测用户输入中是否包含使用/赠送物品的意图
@@ -545,16 +562,17 @@ export const useDialogue = ({
 5. DO NOT update location in your response - user and Wenwan remain in different locations.)`;
       }
 
-      const triggeredYellowHair = gameTime && shouldTriggerYellowHair(bodyStatus, gameTime)
+      const currentGameTime = effectiveGameTime ?? gameTime;
+      const triggeredYellowHair = currentGameTime && shouldTriggerYellowHair(bodyStatus, currentGameTime)
         ? generateYellowHair()
         : null;
-      const triggeredSecondYellowHair = gameTime && shouldTriggerSecondYellowHair(bodyStatus, gameTime)
+      const triggeredSecondYellowHair = currentGameTime && shouldTriggerSecondYellowHair(bodyStatus, currentGameTime)
         ? generateCompanionYellowHair(bodyStatus.yellowHair1!)
         : null;
       const forcedYellowHairName = triggeredYellowHair?.name
         || triggeredSecondYellowHair?.name
         || getForcedYellowHairName(promptText);
-      const normalizedBodyStatus = syncDailyGainState(bodyStatus, effectiveGameTime ?? gameTime);
+      const normalizedBodyStatus = syncDailyGainState(bodyStatus, currentGameTime);
       const previewBodyStatus = triggeredYellowHair
         ? {
           ...normalizedBodyStatus,
@@ -562,7 +580,7 @@ export const useDialogue = ({
             name: triggeredYellowHair.name,
             type: triggeredYellowHair.type,
             active: true,
-            firstMetDate: `${gameTime!.year}-${String(gameTime!.month).padStart(2, '0')}-${String(gameTime!.day).padStart(2, '0')}`
+            firstMetDate: `${currentGameTime!.year}-${String(currentGameTime!.month).padStart(2, '0')}-${String(currentGameTime!.day).padStart(2, '0')}`
           }
         }
         : triggeredSecondYellowHair
@@ -572,7 +590,7 @@ export const useDialogue = ({
               name: triggeredSecondYellowHair.name,
               type: triggeredSecondYellowHair.type,
               active: true,
-              firstMetDate: `${gameTime!.year}-${String(gameTime!.month).padStart(2, '0')}-${String(gameTime!.day).padStart(2, '0')}`
+              firstMetDate: `${currentGameTime!.year}-${String(currentGameTime!.month).padStart(2, '0')}-${String(currentGameTime!.day).padStart(2, '0')}`
             }
           }
           : normalizedBodyStatus;
@@ -584,7 +602,7 @@ export const useDialogue = ({
       };
 
       // 检查是否需要触发黄毛首次登场（周三触发）
-      if (gameTime && triggeredYellowHair)
+      if (currentGameTime && triggeredYellowHair)
       {
         setBodyStatus(prev => {
           if (prev.yellowHair1 !== null || prev.yellowHair2 !== null)
@@ -592,19 +610,19 @@ export const useDialogue = ({
             return prev;
           }
 
-          const newStatus = { ...syncDailyGainState(prev, effectiveGameTime ?? gameTime) };
+          const newStatus = { ...syncDailyGainState(prev, currentGameTime) };
           newStatus.yellowHair1 = {
             name: triggeredYellowHair.name,
             type: triggeredYellowHair.type,
             active: true,
-            firstMetDate: `${gameTime.year}-${String(gameTime.month).padStart(2, '0')}-${String(gameTime.day).padStart(2, '0')}`
+            firstMetDate: `${currentGameTime.year}-${String(currentGameTime.month).padStart(2, '0')}-${String(currentGameTime.day).padStart(2, '0')}`
           };
           return newStatus;
         });
         console.log(`[useDialogue] 周三触发黄毛登场: ${triggeredYellowHair.name} (${triggeredYellowHair.type === 'rich' ? '富二代' : 'cos社社长'})`);
       }
 
-      if (gameTime && triggeredSecondYellowHair)
+      if (currentGameTime && triggeredSecondYellowHair)
       {
         setBodyStatus(prev => {
           if (prev.yellowHair1 === null || prev.yellowHair2 !== null)
@@ -612,14 +630,14 @@ export const useDialogue = ({
             return prev;
           }
 
-          const normalizedPrev = syncDailyGainState(prev, effectiveGameTime ?? gameTime);
+          const normalizedPrev = syncDailyGainState(prev, currentGameTime);
           return {
             ...normalizedPrev,
             yellowHair2: {
               name: triggeredSecondYellowHair.name,
               type: triggeredSecondYellowHair.type,
               active: true,
-              firstMetDate: `${gameTime.year}-${String(gameTime.month).padStart(2, '0')}-${String(gameTime.day).padStart(2, '0')}`
+              firstMetDate: `${currentGameTime.year}-${String(currentGameTime.month).padStart(2, '0')}-${String(currentGameTime.day).padStart(2, '0')}`
             }
           };
         });
@@ -629,9 +647,9 @@ export const useDialogue = ({
       // 检查今天是否有黄毛事件（首个周三起，之后每天都允许出现）
       let todayYellowHair: { name: string; type: 'rich' | 'fat' } | null = null;
       let yellowHairBehaviorStage: number | null = null;
-      if (gameTime && shouldYellowHairAppearToday(previewBodyStatus, gameTime))
+      if (currentGameTime && shouldYellowHairAppearToday(previewBodyStatus, currentGameTime))
       {
-        todayYellowHair = decideTodayYellowHair(previewBodyStatus, gameTime, forcedYellowHairName);
+        todayYellowHair = decideTodayYellowHair(previewBodyStatus, currentGameTime, forcedYellowHairName);
         if (todayYellowHair)
         {
           yellowHairBehaviorStage = calculateYellowHairBehaviorStage(bodyStatus.degradation);
@@ -641,10 +659,10 @@ export const useDialogue = ({
 
       // 如果有黄毛出现，在promptText中添加相关信息
       let enhancedPromptText = promptText;
-      if (gameTime && triggeredYellowHair)
+      if (currentGameTime && triggeredYellowHair)
       {
         enhancedPromptText = `(System: 今天是周三，${triggeredYellowHair.name}（${triggeredYellowHair.type === 'rich' ? '富二代差生' : 'cos社社长'}，高三生）第一次在学校里接触温婉。${triggeredYellowHair.name}会先用正常互动、关心和帮助接近温婉，黄毛系统从今天开始生效。)\n\n${promptText}`;
-      } else if (gameTime && triggeredSecondYellowHair)
+      } else if (currentGameTime && triggeredSecondYellowHair)
       {
         enhancedPromptText = `(System: 今天${triggeredSecondYellowHair.name}（${triggeredSecondYellowHair.type === 'rich' ? '富二代差生' : 'cos社社长'}，高三生）也开始接触温婉。现在黄耄和猪楠都已登场；日常事件里应随机判定今天由谁出场，但像今天这种明确属于${triggeredSecondYellowHair.name}的登场事件，必须由${triggeredSecondYellowHair.name}推进互动。)\n\n${promptText}`;
       } else if (todayYellowHair && yellowHairBehaviorStage !== null)
@@ -1217,7 +1235,11 @@ export const useDialogue = ({
               return filtered;
             });
             // 重新执行最后一次操作
-            handleAction(lastActionRef.current.actionText, lastActionRef.current.isSystemAction);
+            handleAction(
+              lastActionRef.current.actionText,
+              lastActionRef.current.isSystemAction,
+              lastActionRef.current.options,
+            );
           }
         };
 
