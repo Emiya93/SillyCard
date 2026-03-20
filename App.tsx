@@ -29,6 +29,19 @@ type SummaryToastState = {
   message: string;
 };
 
+type DialogueActionSnapshot = {
+  messages: Message[];
+  bodyStatus: BodyStatus;
+  userLocation: LocationID;
+  tweets: Tweet[];
+  calendarEvents: CalendarEvent[];
+  todaySummaries: SummaryEntry[];
+  bigSummaries: string[];
+  summaryCheckpoint: number;
+  bigSummaryCheckpoint: number;
+  gameTime: GameTime;
+};
+
 // 内部组件，需要使用SettingsContext
 const AppContent: React.FC = () => {
   const { settings } = useSettings();
@@ -261,33 +274,44 @@ const AppContent: React.FC = () => {
   }>>(new Map());
 
   // 编辑消息处理函数
+  const actionSnapshotsRef = useRef<Map<string, DialogueActionSnapshot>>(new Map());
+
+  const createDialogueActionSnapshot = (snapshotMessages: Message[]): DialogueActionSnapshot => ({
+    messages: snapshotMessages,
+    bodyStatus: { ...bodyStatus },
+    userLocation,
+    tweets: [...tweets],
+    calendarEvents: [...calendarEvents],
+    todaySummaries: [...todaySummariesRef.current],
+    bigSummaries: [...bigSummariesRef.current],
+    summaryCheckpoint: getSummaryCheckpoint(snapshotMessages),
+    bigSummaryCheckpoint: lastBigSummaryCheckpoint.current,
+    gameTime: cloneGameTime(gameTime),
+  });
+
+  const restoreDialogueActionSnapshot = (snapshot: DialogueActionSnapshot) => {
+    setMessages(snapshot.messages);
+    setBodyStatus(snapshot.bodyStatus);
+    setUserLocation(snapshot.userLocation);
+    setTweets(snapshot.tweets);
+    setCalendarEvents(snapshot.calendarEvents);
+    replaceTodaySummaries(snapshot.todaySummaries);
+    replaceBigSummaries(snapshot.bigSummaries);
+    lastSummaryMessageCount.current = snapshot.summaryCheckpoint;
+    lastBigSummaryCheckpoint.current = snapshot.bigSummaryCheckpoint;
+    setGameTime(snapshot.gameTime);
+  };
+
   const handleEditMessage = (messageId: string, newText: string) => {
-    // 找到要编辑的消息
     const messageIndex = messages.findIndex(m => m.id === messageId);
     if (messageIndex === -1) return;
-
-    // 保存编辑点的状态快照（用于重新生成时使用）
-    const snapshot = {
-      messages: messages.slice(0, messageIndex + 1), // 包含编辑后的消息
-      bodyStatus: { ...bodyStatus },
-      userLocation,
-      tweets: [...tweets],
-      calendarEvents: [...calendarEvents],
-      todaySummaries: [...todaySummariesRef.current],
-      bigSummaries: [...bigSummariesRef.current],
-      summaryCheckpoint: getSummaryCheckpoint(messages.slice(0, messageIndex + 1)),
-      bigSummaryCheckpoint: lastBigSummaryCheckpoint.current,
-      gameTime: cloneGameTime(gameTime)
-    };
+    const snapshot = createDialogueActionSnapshot(messages.slice(0, messageIndex + 1));
     messageSnapshotsRef.current.set(messageId, snapshot);
-
-    // 更新消息内容
     setMessages(prev => prev.map((m, i) =>
       i === messageIndex ? { ...m, text: newText } : m
     ));
   };
 
-  // 计算跳过后的时间（辅助函数）
   const calculateSkippedTime = (currentTime: GameTime, days: number): GameTime => {
     const newTime = { ...currentTime };
     newTime.day += days;
@@ -406,57 +430,59 @@ const AppContent: React.FC = () => {
 
   // 重新生成消息处理函数
   const handleRegenerateMessage = (messageId: string) => {
-    // 找到要重新生成的消息
     const messageIndex = messages.findIndex(m => m.id === messageId);
     if (messageIndex === -1) return;
-
-    // 如果重新生成的是AI消息，删除该消息及之后的所有消息
     if (messages[messageIndex].sender === 'character')
     {
       const messageTime = messages[messageIndex].timestamp;
-
-      // 找到该AI消息对应的用户消息（应该是前一条）
+      const actionMessageIndex = messageIndex - 1;
+      const actionMessage = actionMessageIndex >= 0 ? messages[actionMessageIndex] : null;
+      if (actionMessage && (actionMessage.sender === 'user' || actionMessage.isSystemAction))
+      {
+        const snapshot = actionMessage.sender === 'user'
+          ? messageSnapshotsRef.current.get(actionMessage.id) || actionSnapshotsRef.current.get(actionMessage.id)
+          : actionSnapshotsRef.current.get(actionMessage.id);
+        if (snapshot)
+        {
+          restoreDialogueActionSnapshot(snapshot);
+          const shouldReplayAsSystemAction = actionMessage.isSystemAction === true
+            || messageSnapshotsRef.current.has(actionMessage.id);
+          setTimeout(() => {
+            handleAction(actionMessage.text, shouldReplayAsSystemAction);
+          }, 100);
+          return;
+        }
+        if (actionMessage.isSystemAction)
+        {
+          setMessages(prev => prev.slice(0, actionMessageIndex));
+          setCalendarEvents(prev => prev.filter(e => {
+            const eventTime = parseInt(e.id);
+            return eventTime < messageTime.getTime();
+          }));
+          setTimeout(() => {
+            handleAction(actionMessage.text, true);
+          }, 100);
+          return;
+        }
+      }
       const userMessageIndex = messageIndex - 1;
       if (userMessageIndex >= 0 && messages[userMessageIndex].sender === 'user')
       {
         const userMessage = messages[userMessageIndex];
-
-        // 检查是否有该用户消息的编辑点快照
         const snapshot = messageSnapshotsRef.current.get(userMessage.id);
-
         if (snapshot)
         {
-          // 使用编辑点的状态快照
-          // 删除该AI消息及之后的所有消息
-          setMessages(snapshot.messages);
-
-          // 恢复编辑点的状态
-          setBodyStatus(snapshot.bodyStatus);
-          setUserLocation(snapshot.userLocation);
-          setTweets(snapshot.tweets);
-          setCalendarEvents(snapshot.calendarEvents);
-          replaceTodaySummaries(snapshot.todaySummaries);
-          replaceBigSummaries(snapshot.bigSummaries);
-          lastSummaryMessageCount.current = snapshot.summaryCheckpoint;
-          lastBigSummaryCheckpoint.current = snapshot.bigSummaryCheckpoint;
-          setGameTime(snapshot.gameTime);
-
-          // 重新触发AI回复（使用系统操作，不重复添加用户消息）
+          restoreDialogueActionSnapshot(snapshot);
           setTimeout(() => {
             handleAction(userMessage.text, true);
           }, 100);
         } else
         {
-          // 没有快照，使用当前状态（但删除后续消息）
           setMessages(prev => prev.slice(0, messageIndex));
-
-          // 删除该时间点之后的所有记忆（根据消息时间戳）
           setCalendarEvents(prev => prev.filter(e => {
             const eventTime = parseInt(e.id);
             return eventTime < messageTime.getTime();
           }));
-
-          // 重新触发AI回复（使用系统操作，不重复添加用户消息）
           setTimeout(() => {
             handleAction(userMessage.text, true);
           }, 100);
@@ -465,8 +491,8 @@ const AppContent: React.FC = () => {
     }
   };
 
-  // Wallet State - 钱包余额和消费记录
   const [walletBalance, setWalletBalance] = useState<number>(500); // 初始余额500元
+  
   const [walletTransactions, setWalletTransactions] = useState<Array<{
     id: string;
     name: string;
@@ -829,6 +855,54 @@ const AppContent: React.FC = () => {
   });
 
   const previousTimeRef = useRef<GameTime>(gameTime);
+  const previousMessagesRef = useRef<Message[]>(messages);
+  const previousBodyStatusRef = useRef<BodyStatus>(bodyStatus);
+  const previousUserLocationRef = useRef<LocationID>(userLocation);
+  const previousTweetsRef = useRef<Tweet[]>(tweets);
+  const previousCalendarEventsRef = useRef<CalendarEvent[]>(calendarEvents);
+  const previousTodaySummariesStateRef = useRef<SummaryEntry[]>(todaySummaries);
+  const previousBigSummariesStateRef = useRef<string[]>(bigSummaries);
+  const previousSummaryCheckpointRef = useRef<number>(lastSummaryMessageCount.current);
+  const previousBigSummaryCheckpointRef = useRef<number>(lastBigSummaryCheckpoint.current);
+  const previousGameTimeStateRef = useRef<GameTime>(cloneGameTime(gameTime));
+
+  useEffect(() => {
+    const previousMessages = previousMessagesRef.current;
+    const newActionMessage = messages.length === previousMessages.length + 1
+      ? messages[messages.length - 1]
+      : null;
+
+    if (
+      newActionMessage &&
+      !previousMessages.some(message => message.id === newActionMessage.id) &&
+      (newActionMessage.sender === 'user' || newActionMessage.isSystemAction)
+    )
+    {
+      actionSnapshotsRef.current.set(newActionMessage.id, {
+        messages: [...previousMessages],
+        bodyStatus: { ...previousBodyStatusRef.current },
+        userLocation: previousUserLocationRef.current,
+        tweets: [...previousTweetsRef.current],
+        calendarEvents: [...previousCalendarEventsRef.current],
+        todaySummaries: [...previousTodaySummariesStateRef.current],
+        bigSummaries: [...previousBigSummariesStateRef.current],
+        summaryCheckpoint: previousSummaryCheckpointRef.current,
+        bigSummaryCheckpoint: previousBigSummaryCheckpointRef.current,
+        gameTime: cloneGameTime(previousGameTimeStateRef.current),
+      });
+    }
+
+    previousMessagesRef.current = messages;
+    previousBodyStatusRef.current = bodyStatus;
+    previousUserLocationRef.current = userLocation;
+    previousTweetsRef.current = tweets;
+    previousCalendarEventsRef.current = calendarEvents;
+    previousTodaySummariesStateRef.current = todaySummaries;
+    previousBigSummariesStateRef.current = bigSummaries;
+    previousSummaryCheckpointRef.current = lastSummaryMessageCount.current;
+    previousBigSummaryCheckpointRef.current = lastBigSummaryCheckpoint.current;
+    previousGameTimeStateRef.current = cloneGameTime(gameTime);
+  }, [messages, bodyStatus, userLocation, tweets, calendarEvents, todaySummaries, bigSummaries, gameTime]);
 
   const handleSkipByMinutes = async (minutes: number, label: string) => {
     const newTime = calculateAdvancedTime(gameTime, minutes);

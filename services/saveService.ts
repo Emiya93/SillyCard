@@ -14,15 +14,14 @@ function getSummaryCheckpoint(save: GameSave): number {
 
     if (typeof save.summaryCheckpoint === 'number' && save.summaryCheckpoint >= 0)
     {
+        const normalizedSavedCheckpoint = Math.min(save.summaryCheckpoint, maxCheckpoint);
+
         if (normalizedInferredCheckpoint === 0)
         {
-            return 0;
+            return normalizedSavedCheckpoint;
         }
 
-        return Math.max(
-            normalizedInferredCheckpoint,
-            Math.min(save.summaryCheckpoint, maxCheckpoint)
-        );
+        return Math.max(normalizedInferredCheckpoint, normalizedSavedCheckpoint);
     }
 
     return normalizedInferredCheckpoint;

@@ -931,15 +931,23 @@ function limitTextLength(text: string, maxLength: number, isMobile: boolean): st
   return text.substring(0, maxLength) + '\n\n[内容已截断以适应手机端...]';
 }
 
-async function getSystemInstruction(presetContent?: string, degradation?: number): Promise<string> {
+async function getSystemInstruction(
+  presetContent?: string,
+  degradation?: number,
+  options?: {
+    includeSillyTavernContext?: boolean;
+  }
+): Promise<string> {
+  const includeSillyTavernContext = options?.includeSillyTavernContext !== false;
   // 检测是否为移动端
   const isMobile = isMobileDevice();
 
   // 检查预设内容是否变化
-  const presetChanged = presetContent && presetContent !== lastPresetContent;
+  const presetChanged = includeSillyTavernContext && !!presetContent && presetContent !== lastPresetContent;
 
   // 如果缓存有效且预设内容没变化，直接返回
   if (
+    includeSillyTavernContext &&
     dynamicSystemInstruction &&
     Date.now() - systemInstructionCacheTime < CACHE_DURATION &&
     !presetChanged
@@ -949,7 +957,7 @@ async function getSystemInstruction(presetContent?: string, degradation?: number
   }
 
   // 记录当前预设内容（在重新生成之前更新，确保下次检查时正确）
-  if (presetContent !== undefined)
+  if (includeSillyTavernContext && presetContent !== undefined)
   {
     lastPresetContent = presetContent || "";
   }
@@ -978,52 +986,37 @@ async function getSystemInstruction(presetContent?: string, degradation?: number
   const MAX_PRESET_LENGTH = isMobile ? 1000 : 3000; // 手机端限制1000字符
 
   // 方法1: 尝试使用SillyTavern API函数获取世界书和预设
-  try
+  if (includeSillyTavernContext)
   {
-    const { worldbooks, source } = await getAllRelevantWorldbooks();
-
-    if (source === 'api' && worldbooks.length > 0)
-    {
-      usedSillyTavernData = true;
-      hasSillyTavernWorldbook = true;
-      let worldbookText = '\n\n=== 世界书 (Worldbook) ===\n';
-
-      worldbooks.forEach((wb, index) => {
-        if (index > 0) worldbookText += '\n';
-        worldbookText += `\n[世界书: ${wb.name}]\n`;
-        const entriesText = formatWorldbookEntries(wb.entries);
-        if (entriesText)
-        {
-          // 手机端限制世界书长度
-          const processedText = limitTextLength(entriesText, MAX_WORLDBOOK_LENGTH, isMobile);
-          worldbookText += processedText;
-        }
-      });
-
-      finalInstruction += worldbookText;
-    }
-
-    // 获取当前使用的预设（支持异步，跨域时使用）
     try
     {
-      const currentPreset = await getPresetAsync('in_use');
-      if (currentPreset)
+      const { worldbooks, source } = await getAllRelevantWorldbooks();
+
+      if (source === 'api' && worldbooks.length > 0)
       {
         usedSillyTavernData = true;
-        let presetText = formatPreset(currentPreset);
-        if (presetText && presetText.trim().length > 0)
-        {
-          // 手机端限制预设长度
-          presetText = limitTextLength(presetText, MAX_PRESET_LENGTH, isMobile);
-          finalInstruction += presetText;
-        }
+        hasSillyTavernWorldbook = true;
+        let worldbookText = '\n\n=== 世界书 (Worldbook) ===\n';
+
+        worldbooks.forEach((wb, index) => {
+          if (index > 0) worldbookText += '\n';
+          worldbookText += `\n[世界书: ${wb.name}]\n`;
+          const entriesText = formatWorldbookEntries(wb.entries);
+          if (entriesText)
+          {
+            // 手机端限制世界书长度
+            const processedText = limitTextLength(entriesText, MAX_WORLDBOOK_LENGTH, isMobile);
+            worldbookText += processedText;
+          }
+        });
+
+        finalInstruction += worldbookText;
       }
-    } catch (error)
-    {
-      // 如果异步获取失败，尝试同步方式（同域时）
+
+      // 获取当前使用的预设（支持异步，跨域时使用）
       try
       {
-        const currentPreset = getPreset('in_use');
+        const currentPreset = await getPresetAsync('in_use');
         if (currentPreset)
         {
           usedSillyTavernData = true;
@@ -1035,18 +1028,36 @@ async function getSystemInstruction(presetContent?: string, degradation?: number
             finalInstruction += presetText;
           }
         }
-      } catch (e)
+      } catch (error)
       {
-        // 忽略错误
+        // 如果异步获取失败，尝试同步方式（同域时）
+        try
+        {
+          const currentPreset = getPreset('in_use');
+          if (currentPreset)
+          {
+            usedSillyTavernData = true;
+            let presetText = formatPreset(currentPreset);
+            if (presetText && presetText.trim().length > 0)
+            {
+              // 手机端限制预设长度
+              presetText = limitTextLength(presetText, MAX_PRESET_LENGTH, isMobile);
+              finalInstruction += presetText;
+            }
+          }
+        } catch (e)
+        {
+          // 忽略错误
+        }
       }
+    } catch (error)
+    {
+      // 忽略错误，继续尝试传统方法
     }
-  } catch (error)
-  {
-    // 忽略错误，继续尝试传统方法
   }
 
   // 方法2: 如果API方法失败，使用传统方法（postMessage、window对象、URL参数）
-  if (!usedSillyTavernData)
+  if (includeSillyTavernContext && !usedSillyTavernData)
   {
     let stData = getSillyTavernDataFromWindow() || getSillyTavernDataFromURL();
 
@@ -1104,10 +1115,14 @@ async function getSystemInstruction(presetContent?: string, degradation?: number
     finalInstruction = `${finalInstruction}\n\n--- 用户导入的预设内容 ---\n${processedPreset}`;
   }
 
-  dynamicSystemInstruction = finalInstruction;
-  staticSystemInstruction = finalInstruction; // 静态部分就是完整的系统提示词（规则、设定、世界书、预设）
-  systemInstructionCacheTime = Date.now();
-  return dynamicSystemInstruction;
+  if (includeSillyTavernContext)
+  {
+    dynamicSystemInstruction = finalInstruction;
+    staticSystemInstruction = finalInstruction; // 静态部分就是完整的系统提示词（规则、设定、世界书、预设）
+    systemInstructionCacheTime = Date.now();
+  }
+
+  return finalInstruction;
 }
 
 /**
@@ -1936,8 +1951,30 @@ export async function generateCharacterResponse(
   const preferSillyTavernAPI = isSillyTavern && !hasValidAPIConfig && (canUseSTAPI || canUseTavernHelper);
 
 
-  // 如果是远程微信消息，使用简化的提示词（只返回文字回复，不更新状态）
-  const contextPrompt = isRemoteWeChat
+  const buildMemoryDataBlock = (includeMemoryData: boolean): string => {
+    if (!includeMemoryData || !memoryData)
+    {
+      return "";
+    }
+
+    return `
+[Memory Data - 用于判断哥哥是否"下头"]
+今日记忆：${memoryData.todaySummary || "（暂无今日记忆）"}
+历史事件：
+${memoryData.calendarEvents.length > 0
+        ? memoryData.calendarEvents
+          .slice(0, 10)
+          .map((e) => `- ${e.time} ${e.title}: ${e.description}`)
+          .join("\n")
+        : "（暂无历史事件）"
+      }
+**重要**：请根据以上记忆综合分析哥哥的行为模式，判断他是否"很下头"。如果记忆显示哥哥经常做下头的事，即使当前行为轻微，也要考虑累积效应，适当降低好感度（-1到-2点）。堕落度只通过黄毛/间男事件增长，不会因为哥哥的下头行为而增长。
+`;
+  };
+
+  const hasInlineMemoryData = (includeMemoryData: boolean) => includeMemoryData && !!memoryData;
+
+  const buildContextPrompt = (includeMemoryData: boolean): string => isRemoteWeChat
     ? `
 [Current Game State]
 User Location: ${userLocation}
@@ -2019,22 +2056,7 @@ Today's Degradation Gain: ${currentStatus.todayDegradationGain || 0}/${DAILY_DEG
    - If Wenwan is at an interior location (home), "exactLocation" can be empty or same as location
    - If Wenwan is not accessible (e.g., on a boat that has left port), set "isAccessible": false
    - If player asks "你在哪" via WeChat, Wenwan should reply with exact location so player can find her
-${memoryData
-      ? `
-[Memory Data - 用于判断哥哥是否"下头"]
-今日记忆：${memoryData.todaySummary || "（暂无今日记忆）"}
-历史事件：
-${memoryData.calendarEvents.length > 0
-        ? memoryData.calendarEvents
-          .slice(0, 10)
-          .map((e) => `- ${e.time} ${e.title}: ${e.description}`)
-          .join("\n")
-        : "（暂无历史事件）"
-      }
-**重要**：请根据以上记忆综合分析哥哥的行为模式，判断他是否"很下头"。如果记忆显示哥哥经常做下头的事，即使当前行为轻微，也要考虑累积效应，适当降低好感度（-1到-2点）。堕落度只通过黄毛/间男事件增长，不会因为哥哥的下头行为而增长。
-`
-      : ""
-    }
+${buildMemoryDataBlock(includeMemoryData)}
 
 [User Input]
 ${promptText}
@@ -2054,9 +2076,9 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
    - "睡衣" or "普通睡衣" for 普通睡衣
    If user asks to change clothes, IMMEDIATELY update "overallClothing" and describe the change in your reply. Wenwan has access to all these outfits.
 
-3. **MEMORY-BASED JUDGMENT**: ${memoryData
+3. **MEMORY-BASED JUDGMENT**: ${hasInlineMemoryData(includeMemoryData)
       ? "根据上面的记忆数据，综合分析哥哥的行为。如果判断他很下头，降低好感度（-1到-2点）。堕落度只通过黄毛/间男事件增长，不会因为哥哥的下头行为而增长。"
-      : "根据当前对话和游戏状态，判断哥哥是否很下头。如果判断他很下头，降低好感度（-1到-2点），而不是增加堕落度。堕落度只通过黄毛/间男事件增长。"
+      : "根据当前对话历史、已有总结和游戏状态，判断哥哥是否很下头。如果判断他很下头，降低好感度（-1到-2点），而不是增加堕落度。堕落度只通过黄毛/间男事件增长。"
     }
 
 4. **AUTOMATIC TIME ADVANCEMENT (自动时间流逝)**:
@@ -2068,25 +2090,33 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
 5. Generate the next response in valid JSON format according to the system instruction.
 `;
 
+  // 前端收集的状态、记忆与总结仍然要保留；只在 ST Generate 路径里剔除酒馆自己会注入的角色卡/预设/世界书。
+  const contextPrompt = buildContextPrompt(true);
+  const stContextPrompt = buildContextPrompt(true);
+
+  const shouldPrepareSillyTavernManagedPrompt =
+    forceSillyTavernGenerate || useSillyTavernAPI || preferSillyTavernAPI;
+  const stManagedSystemInstruction = shouldPrepareSillyTavernManagedPrompt
+    ? await getSystemInstruction(
+      memoryData?.presetContent || undefined,
+      currentStatus.degradation,
+      { includeSillyTavernContext: false }
+    )
+    : null;
+
   // 如果用户在设置中开启“优先使用酒馆 Generate”，则强制先走 st-api-wrapper
-  // 这里仍然注入完整系统提示词，避免自定义预设内容在酒馆 Generate 路径中丢失。
   if (forceSillyTavernGenerate)
   {
     try
     {
-      const stSystemInstruction = await getSystemInstruction(
-        memoryData?.presetContent || undefined,
-        currentStatus.degradation
-      );
-
       const stChatHistoryReplace = [
         ...history.map((h) => toSTChatMessage(h.role, h.content)),
-        toSTChatMessage('user', contextPrompt),
+        toSTChatMessage('user', stContextPrompt),
       ];
 
       logDebug("resolved-system-instruction", {
         path: "force-sillytavern-generate",
-        systemInstruction: stSystemInstruction,
+        systemInstruction: stManagedSystemInstruction,
       });
 
       const stGeneratePayload: STWrappedPromptGeneratePayload = {
@@ -2096,7 +2126,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
         extraBlocks: [
           {
             role: 'system',
-            content: stSystemInstruction,
+            content: stManagedSystemInstruction || "",
             index: 0,
           }
         ],
@@ -2243,12 +2273,14 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
   };
 
   const totalPromptLength = messages.reduce((sum, msg) => sum + estimatePromptTokens(msg.content), 0);
-  const stApiChatHistory = messages
-    .filter(msg => msg.role !== 'system')
-    .map(msg => ({
-      role: msg.role,
-      content: msg.content,
-    }));
+  const stApiChatHistory = [
+    ...history.map((h) => ({
+      role: h.role === "user" ? "user" : ("assistant" as "user" | "assistant"),
+      content: h.content,
+    })),
+    { role: "user" as const, content: stContextPrompt },
+  ];
+  const stPromptGenerateSystemInstruction = stManagedSystemInstruction || systemInstruction;
 
   // 如果prompt过长，给出警告并尝试优化
   if (totalPromptLength > 10000)
@@ -2347,7 +2379,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
                 // 注入系统提示词
                 {
                   role: 'system',
-                  content: systemInstruction,
+                  content: stPromptGenerateSystemInstruction,
                   index: 0 // 插入到最前面
                 }
               ],
@@ -2407,7 +2439,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
                 extraBlocks: [
                   {
                     role: 'system',
-                    content: systemInstruction,
+                    content: stPromptGenerateSystemInstruction,
                     index: 0
                   }
                 ],
@@ -2475,7 +2507,7 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
             extraBlocks: [
               {
                 role: 'system',
-                content: systemInstruction,
+                content: stPromptGenerateSystemInstruction,
                 index: 0
               }
             ],

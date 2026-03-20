@@ -193,17 +193,20 @@ function buildFrontendRegexScripts() {
     {
       id: FRONTEND_REGEX_ID,
       scriptName: "`111`",
-      findRegex: FRONTEND_TRIGGER,
+      findRegex: `^${FRONTEND_TRIGGER}$`,
       replaceString: `\`\`\`\n${hostHtml}\n\`\`\``,
       trimStrings: [],
-      placement: [1, 2],
+      placement: [2],
       disabled: false,
       markdownOnly: true,
-      promptOnly: true,
+      promptOnly: false,
       runOnEdit: true,
       substituteRegex: 0,
       minDepth: null,
       maxDepth: null,
+      targets: ["aiOutput"],
+      view: ["user"],
+      macroMode: "none",
     },
   ];
 }
