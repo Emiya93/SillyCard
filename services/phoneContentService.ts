@@ -6,17 +6,59 @@ export interface PhoneTweetDraft {
   imageDescription: string;
 }
 
-function parseTweetJson(rawText: string): PhoneTweetDraft | null {
-  if (!rawText) return null;
+function extractBalancedJsonObject(text: string): string | null {
+  const start = text.indexOf('{');
+  if (start === -1) {
+    return null;
+  }
 
-  const trimmed = rawText.trim();
-  const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  const candidate = codeBlockMatch?.[1] || trimmed;
-  const jsonMatch = candidate.match(/\{[\s\S]*\}/);
-  const jsonText = (jsonMatch?.[0] || candidate).trim();
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i += 1) {
+    const char = text[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{') {
+      depth += 1;
+      continue;
+    }
+
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseTweetDraftCandidate(candidate: string): PhoneTweetDraft | null {
+  const trimmed = candidate.trim();
+  if (!trimmed) {
+    return null;
+  }
 
   try {
-    const parsed = JSON.parse(jsonText);
+    const parsed = JSON.parse(trimmed);
     if (
       typeof parsed?.content === 'string' &&
       parsed.content.trim() &&
@@ -28,9 +70,40 @@ function parseTweetJson(rawText: string): PhoneTweetDraft | null {
         imageDescription: parsed.imageDescription.trim(),
       };
     }
-  } catch (error) {
-    console.warn('[phoneContentService] Failed to parse tweet JSON:', error);
+  } catch {
+    return null;
   }
+
+  return null;
+}
+
+function parseTweetJson(rawText: string): PhoneTweetDraft | null {
+  if (!rawText) return null;
+
+  const trimmed = rawText.trim();
+  const fenceStripped = trimmed
+    .replace(/^```[a-zA-Z0-9_-]*\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  const codeBlockMatch = trimmed.match(/```(?:json|JSON|Json)?\s*([\s\S]*?)\s*```/);
+  const balancedFromTrimmed = extractBalancedJsonObject(trimmed);
+  const balancedFromFenceStripped = extractBalancedJsonObject(fenceStripped);
+  const candidates = [
+    trimmed,
+    fenceStripped,
+    codeBlockMatch?.[1]?.trim(),
+    balancedFromTrimmed?.trim(),
+    balancedFromFenceStripped?.trim(),
+  ].filter((candidate): candidate is string => Boolean(candidate && candidate.trim()));
+
+  for (const candidate of candidates) {
+    const parsed = parseTweetDraftCandidate(candidate);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  console.warn('[phoneContentService] Failed to parse tweet JSON:', rawText);
 
   return null;
 }

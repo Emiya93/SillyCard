@@ -687,6 +687,90 @@ function limitTextLength(text: string, maxLength: number, isMobile: boolean): st
   return text.substring(0, maxLength) + '\n\n[内容已截断以适应手机端...]';
 }
 
+function dedupeRepeatedTaggedSections(text: string, tagName: string): string {
+  const pattern = new RegExp(`<${tagName}>[\\s\\S]*?<\\/${tagName}>`, 'gi');
+  const seen = new Set<string>();
+
+  return text.replace(pattern, (block) => {
+    const normalized = block.trim();
+    if (!normalized)
+    {
+      return '';
+    }
+
+    if (seen.has(normalized))
+    {
+      return '';
+    }
+
+    seen.add(normalized);
+    return block;
+  });
+}
+
+function removeTaggedSectionIf(
+  text: string,
+  tagName: string,
+  predicate: (section: string) => boolean,
+): string {
+  const pattern = new RegExp(`<${tagName}>[\\s\\S]*?<\\/${tagName}>`, 'gi');
+  return text.replace(pattern, (section) => (predicate(section) ? '' : section));
+}
+
+function sanitizeImportedPresetContent(presetContent: string): string {
+  let sanitized = presetContent.replace(/\r\n/g, '\n').trim();
+
+  if (!sanitized)
+  {
+    return '';
+  }
+
+  for (const tagName of [
+    'world_logic',
+    'narrative_voice',
+    'neutral',
+    'character_knowledge',
+    'anti_literary',
+    'word_count',
+    'Writing_Style',
+  ])
+  {
+    sanitized = dedupeRepeatedTaggedSections(sanitized, tagName);
+  }
+
+  sanitized = removeTaggedSectionIf(sanitized, 'interactive_input', () => true);
+  sanitized = removeTaggedSectionIf(
+    sanitized,
+    'world_info',
+    (section) => /CHARACTER PROFILE/i.test(section) && /(Wenwan|温婉)/.test(section),
+  );
+
+  sanitized = sanitized.replace(
+    /\*\*CHARACTER PROFILE[\s\S]*?(?=\n(?:\*\*[^*\n][\s\S]*?\*\*|<[A-Za-z_\/][^>]*>|(?:Mingyue|Qiuqingzi):|$))/gi,
+    (section) => ((/(Wenwan|温婉)/.test(section) && section.length > 200) ? '' : section),
+  );
+
+  sanitized = sanitized.replace(
+    /\[Current Game State\][\s\S]*?(?=\n(?:\[Critical Instructions\]|\[User Input\]|<\/interactive_input>|(?:Mingyue|Qiuqingzi):|<thinking>|$))/gi,
+    '',
+  );
+  sanitized = sanitized.replace(
+    /\[Memory Data - [^\]]+\][\s\S]*?(?=\n(?:\[User Input\]|\[Critical Instructions\]|<\/interactive_input>|(?:Mingyue|Qiuqingzi):|<thinking>|$))/gi,
+    '',
+  );
+  sanitized = sanitized.replace(/^Current Game Time:.*$/gim, '');
+  sanitized = sanitized.replace(/^Today's Favorability Gain:.*$/gim, '');
+  sanitized = sanitized.replace(/^Today's Degradation Gain:.*$/gim, '');
+  sanitized = sanitized.replace(/^(?:Mingyue|Qiuqingzi):\s*<interactive_input>\s*$/gim, '');
+  sanitized = sanitized.replace(/^<\/interactive_input>\s*$/gim, '');
+
+  sanitized = sanitized
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  return sanitized;
+}
+
 async function getSystemInstruction(
   presetContent?: string,
   favorability?: number,
@@ -697,11 +781,16 @@ async function getSystemInstruction(
 ): Promise<string> {
   const includeSillyTavernContext = options?.includeSillyTavernContext !== false;
   const behaviorRuleKey = `${favorability ?? "na"}:${degradation ?? "na"}`;
+  const sanitizedPresetContent = presetContent
+    ? sanitizeImportedPresetContent(presetContent)
+    : "";
   // 检测是否为移动端
   const isMobile = isMobileDevice();
 
   // 检查预设内容是否变化
-  const presetChanged = includeSillyTavernContext && !!presetContent && presetContent !== lastPresetContent;
+  const presetChanged =
+    includeSillyTavernContext &&
+    sanitizedPresetContent !== lastPresetContent;
 
   // 如果缓存有效且预设内容没变化，直接返回
   if (
@@ -718,7 +807,7 @@ async function getSystemInstruction(
   // 记录当前预设内容（在重新生成之前更新，确保下次检查时正确）
   if (includeSillyTavernContext && presetContent !== undefined)
   {
-    lastPresetContent = presetContent || "";
+    lastPresetContent = sanitizedPresetContent;
   }
 
   // 🔥 使用模块化规则系统组装基础指令
@@ -868,9 +957,17 @@ async function getSystemInstruction(
   }
 
   // 如果用户导入了预设内容，追加到系统提示词
-  if (presetContent && presetContent.trim())
+  if (sanitizedPresetContent)
   {
-    const processedPreset = limitTextLength(presetContent, MAX_PRESET_LENGTH, isMobile);
+    if (presetContent && sanitizedPresetContent.length < presetContent.trim().length)
+    {
+      console.log('[characterService] 已清洗导入预设中的重复角色/示例内容', {
+        originalLength: presetContent.trim().length,
+        sanitizedLength: sanitizedPresetContent.length,
+      });
+    }
+
+    const processedPreset = limitTextLength(sanitizedPresetContent, MAX_PRESET_LENGTH, isMobile);
     finalInstruction = `${finalInstruction}\n\n--- 用户导入的预设内容 ---\n${processedPreset}`;
   }
 
@@ -1850,19 +1947,69 @@ ${memoryData?.nsfwStyle ? `**NFSW描写规范**:\n${memoryData.nsfwStyle}\n\n` :
 5. Generate the next response in valid JSON format according to the system instruction.
 `;
 
-  // 前端收集的状态、记忆与总结仍然要保留；只在 ST Generate 路径里剔除酒馆自己会注入的角色卡/预设/世界书。
+  const buildSillyTavernBridgeInstruction = (): string => isRemoteWeChat
+    ? `You are connected to a game runtime on top of the active SillyTavern preset.
+Keep following the current SillyTavern preset, character card, and world book.
+Return JSON only. Do not output code fences, markdown, or extra explanation.
+Schema: {"reply":"...","status":{...}}
+- Write in Chinese (Simplified).
+- "reply" must be a short, natural WeChat-style first-person message from Wenwan.
+- The user cannot directly see Wenwan's body language or physical actions in this remote WeChat reply.
+- "status" must be a complete object containing all current fields, preserving unchanged values.
+- Keep location unchanged unless the plot explicitly changes it.
+- Keep body/clothing details unchanged unless the plot explicitly changes them.
+- Allowed emotion values: "neutral", "happy", "shy", "angry", "sad", "aroused", "surprised", "tired".
+- If the user asks to sleep, rest, or let time pass, describe the time skip in the reply.
+- Never include <thinking>, analysis, or any text outside the JSON object.`
+    : `You are connected to a game runtime on top of the active SillyTavern preset.
+Keep following the current SillyTavern preset, character card, and world book.
+Return JSON only. Do not output code fences, markdown, or extra explanation.
+Schema: {"reply":"...","status":{...}}
+- Write in Chinese (Simplified).
+- "reply" is the in-character continuation of the current scene.
+- "status" must be a complete object containing all current fields, preserving unchanged values.
+- Update status.location / exactLocation / isAccessible when the scene clearly moves Wenwan.
+- Update status.overallClothing when clothing changes.
+- Allowed emotion values: "neutral", "happy", "shy", "angry", "sad", "aroused", "surprised", "tired".
+- If the user asks to sleep, rest, or let time pass, describe the time skip in the reply.
+- Never include <thinking>, analysis, or any text outside the JSON object.`;
+
+  const buildSillyTavernRuntimeBlock = (includeMemoryData: boolean): string => isRemoteWeChat
+    ? `
+[Runtime State]
+User Location: ${userLocation}
+Wenwan Location: ${currentStatus.location}
+Current Status JSON: ${JSON.stringify(currentStatus, null, 2)}
+Current Game Time: ${memoryData?.gameTime ? `${memoryData.gameTime.year}-${String(memoryData.gameTime.month).padStart(2, '0')}-${String(memoryData.gameTime.day).padStart(2, '0')} ${memoryData.gameTime.hour}:${String(memoryData.gameTime.minute).padStart(2, '0')} (${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][memoryData.gameTime.weekday]})` : '未知'}
+Today's Favorability Gain: ${currentStatus.todayFavorabilityGain || 0}/${DAILY_FAVORABILITY_GAIN_LIMIT}
+Today's Degradation Gain: ${currentStatus.todayDegradationGain || 0}/${DAILY_DEGRADATION_GAIN_LIMIT}
+${buildMemoryDataBlock(includeMemoryData).replace('[Memory Data - 用于判断哥哥是否"下头"]', '[Recent Memory For Judgment]').trim()}
+
+`
+    : `
+[Runtime State]
+User Location: ${userLocation}
+Wenwan Location: ${currentStatus.location}${currentStatus.exactLocation ? ` (精确位置: ${currentStatus.exactLocation})` : ''}${currentStatus.isAccessible === false ? ' (不可访问，如游艇已出海)' : ''}
+Current Status JSON: ${JSON.stringify(currentStatus, null, 2)}
+Current Game Time: ${memoryData?.gameTime ? `${memoryData.gameTime.year}-${String(memoryData.gameTime.month).padStart(2, '0')}-${String(memoryData.gameTime.day).padStart(2, '0')} ${memoryData.gameTime.hour}:${String(memoryData.gameTime.minute).padStart(2, '0')} (${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][memoryData.gameTime.weekday]})` : '未知'}
+Today's Favorability Gain: ${currentStatus.todayFavorabilityGain || 0}/${DAILY_FAVORABILITY_GAIN_LIMIT}
+Today's Degradation Gain: ${currentStatus.todayDegradationGain || 0}/${DAILY_DEGRADATION_GAIN_LIMIT}
+${buildMemoryDataBlock(includeMemoryData).replace('[Memory Data - 用于判断哥哥是否"下头"]', '[Recent Memory For Judgment]').trim()}
+
+[Runtime Notes]
+- If Wenwan moves, update status.location / exactLocation / isAccessible.
+- If clothing changes, update status.overallClothing.
+- If the user asks to sleep, rest, or let time pass, describe the time skip in reply.
+`;
+
+  // 前端收集的状态、记忆与总结仍然要保留；但在 ST Generate 路径里只发送精简运行时数据，避免与酒馆预设重复扮演同一层。
   const contextPrompt = buildContextPrompt(true);
-  const stContextPrompt = buildContextPrompt(true);
+  const stContextPrompt = promptText;
 
   const shouldPrepareSillyTavernManagedPrompt =
     forceSillyTavernGenerate || useSillyTavernAPI || preferSillyTavernAPI;
   const stManagedSystemInstruction = shouldPrepareSillyTavernManagedPrompt
-    ? await getSystemInstruction(
-      memoryData?.presetContent || undefined,
-      currentStatus.favorability,
-      currentStatus.degradation,
-      { includeSillyTavernContext: false }
-    )
+    ? `${buildSillyTavernBridgeInstruction()}\n\n${buildSillyTavernRuntimeBlock(true)}`
     : null;
 
   // 如果用户在设置中开启“优先使用酒馆 Generate”，则强制先走 st-api-wrapper

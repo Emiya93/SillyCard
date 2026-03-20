@@ -92,7 +92,7 @@ interface AppProps {
     onClose: () => void;
     userLocation?: LocationID;
     sisterLocation?: LocationID;
-    onMoveUser?: (location: LocationID, withSister: boolean, isFacility?: boolean, facilityName?: string) => void;
+    onMoveUser?: (location: LocationID, withSister: boolean, isFacility?: boolean, facilityName?: string) => Promise<void> | void;
     status?: BodyStatus;
     onAction?: (text: string) => void; // For sending messages/buying items
     messages?: Message[]; // To show chat history in SocialApp
@@ -490,6 +490,7 @@ export const MapsApp: React.FC<AppProps> = ({
     const [showGuestRoomOptions, setShowGuestRoomOptions] = useState(false);
     const [selectedLocation, setSelectedLocation] = useState<{ id: string, name: string } | null>(null);
     const [selectedFacility, setSelectedFacility] = useState<{ name: string, price?: number, priceForTwo?: number, movieTypes?: string[], description?: string, isWork?: boolean } | null>(null);
+    const [isSelectionModalArmed, setIsSelectionModalArmed] = useState(false);
     const [expandedLuxuryShop, setExpandedLuxuryShop] = useState(false); // 奢侈品店是否展开
     const [selectedMovieType, setSelectedMovieType] = useState<string | null>(null);
     const [selectedSeatType, setSelectedSeatType] = useState<'normal' | 'vip' | 'couple' | null>(null); // 座位类型：普通座、VIP座、情侣座
@@ -520,6 +521,23 @@ export const MapsApp: React.FC<AppProps> = ({
             clearWorkNoticeTimer();
         };
     }, []);
+
+    useEffect(() => {
+        if (!selectedLocation && !selectedFacility)
+        {
+            setIsSelectionModalArmed(false);
+            return;
+        }
+
+        setIsSelectionModalArmed(false);
+        const timer = window.setTimeout(() => {
+            setIsSelectionModalArmed(true);
+        }, 180);
+
+        return () => {
+            window.clearTimeout(timer);
+        };
+    }, [selectedFacility, selectedLocation]);
 
     // Interior Rooms Definition
     const rooms: { id: LocationID; label: string; icon: any; className?: string }[] = [
@@ -684,15 +702,17 @@ export const MapsApp: React.FC<AppProps> = ({
         }
     };
 
-    const confirmMove = (inviteSister: boolean) => {
+    const confirmMove = async (inviteSister: boolean) => {
         if (selectedLocation && onMoveUser)
         {
             const targetLocation = selectedLocation.id as LocationID;
             const isMasterBedroom = targetLocation === 'master_bedroom';
             const isGuestBedroom = targetLocation === 'guest_bedroom';
 
-            onMoveUser(targetLocation, inviteSister).then(() => {
-                setSelectedLocation(null);
+            try
+            {
+                closeSelectionModal();
+                await Promise.resolve(onMoveUser(targetLocation, inviteSister));
 
                 // 如果移动到主卧，自动显示睡觉选项
                 if (isMasterBedroom && onSleep)
@@ -708,10 +728,10 @@ export const MapsApp: React.FC<AppProps> = ({
                         if (onEnterGuestRoom) onEnterGuestRoom();
                     }, 800);
                 }
-            }).catch((error) => {
+            } catch (error)
+            {
                 console.error('移动失败:', error);
-                setSelectedLocation(null);
-            });
+            }
         }
     };
 
@@ -720,6 +740,12 @@ export const MapsApp: React.FC<AppProps> = ({
         setSelectedMovieType(null);
         setSelectedSeatType(null);
         setSelectedWorkHours(1);
+    };
+
+    const closeSelectionModal = () => {
+        setSelectedLocation(null);
+        closeFacilityModal();
+        setIsSelectionModalArmed(false);
     };
 
     const confirmFacilityAction = async (inviteSister: boolean) => {
@@ -1061,8 +1087,14 @@ export const MapsApp: React.FC<AppProps> = ({
 
             {/* --- Modals --- */}
             {(selectedLocation || selectedFacility) && (
-                <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in">
-                    <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl animate-slide-up max-h-[90vh] flex flex-col overflow-hidden">
+                <div
+                    className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in"
+                    onClick={closeSelectionModal}
+                >
+                    <div
+                        className="bg-white rounded-3xl w-full max-w-md shadow-2xl animate-slide-up max-h-[90vh] flex flex-col overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         <div className="flex-1 overflow-y-auto p-4 sm:p-6">
                             <h3 className="text-xl font-bold text-gray-900 mb-2">
                                 {selectedLocation ? `前往 ${selectedLocation.name}?` : `体验 ${selectedFacility?.name}?`}
@@ -1197,8 +1229,8 @@ export const MapsApp: React.FC<AppProps> = ({
                                 {canInviteSister && !selectedFacility?.isWork && (
                                     <button
                                         onClick={() => selectedLocation ? confirmMove(true) : confirmFacilityAction(true)}
-                                        disabled={selectedFacility?.movieTypes && (!selectedMovieType || !selectedSeatType)}
-                                        className={`w-full py-3 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 ${selectedFacility?.movieTypes && (!selectedMovieType || !selectedSeatType)
+                                        disabled={!isSelectionModalArmed || !!(selectedFacility?.movieTypes && (!selectedMovieType || !selectedSeatType))}
+                                        className={`w-full py-3 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 ${!isSelectionModalArmed || (selectedFacility?.movieTypes && (!selectedMovieType || !selectedSeatType))
                                                 ? 'bg-gray-400 cursor-not-allowed'
                                                 : 'bg-pink-500 hover:bg-pink-600 shadow-pink-200'
                                             }`}
@@ -1210,8 +1242,8 @@ export const MapsApp: React.FC<AppProps> = ({
 
                                 <button
                                     onClick={() => selectedLocation ? confirmMove(false) : confirmFacilityAction(false)}
-                                    disabled={selectedFacility?.movieTypes && (!selectedMovieType || !selectedSeatType)}
-                                    className={`w-full py-3 rounded-xl font-bold text-white shadow-lg ${selectedFacility?.movieTypes && (!selectedMovieType || !selectedSeatType)
+                                    disabled={!isSelectionModalArmed || !!(selectedFacility?.movieTypes && (!selectedMovieType || !selectedSeatType))}
+                                    className={`w-full py-3 rounded-xl font-bold text-white shadow-lg ${!isSelectionModalArmed || (selectedFacility?.movieTypes && (!selectedMovieType || !selectedSeatType))
                                             ? 'bg-gray-400 cursor-not-allowed'
                                             : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'
                                         }`}
@@ -1220,10 +1252,7 @@ export const MapsApp: React.FC<AppProps> = ({
                                 </button>
 
                                 <button
-                                    onClick={() => {
-                                        setSelectedLocation(null);
-                                        closeFacilityModal();
-                                    }}
+                                    onClick={closeSelectionModal}
                                     className="w-full py-3 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200"
                                 >
                                     取消

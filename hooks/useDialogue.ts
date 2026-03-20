@@ -2,7 +2,7 @@ import type React from "react";
 import { useRef, useState } from "react";
 import { useSettings } from "../contexts/SettingsContext";
 import { getSecondaryAIConfig, hasValidAIConfig } from "../services/aiConfigUtils";
-import { buildDialogueRounds } from "../services/dialogueSummaryUtils";
+import { buildDialogueRounds, SUMMARY_BATCH_SIZE } from "../services/dialogueSummaryUtils";
 import { calculateYellowHairBehaviorStage, decideTodayYellowHair, generateCompanionYellowHair, generateYellowHair, shouldTriggerSecondYellowHair, shouldTriggerYellowHair, shouldYellowHairAppearToday, willWenwanAccept } from "../services/arcLightService";
 import { generateCharacterResponse } from "../services/characterService";
 import { appendDebugLog } from "../services/debugLogService";
@@ -463,23 +463,32 @@ export const useDialogue = ({
         }
       }
 
-      // 构建对话历史：当前未总结的所有对话 + 最近50条小总结 + 所有大总结
+      // 构建对话历史：最近10轮完整对话 + 不与最近10轮完全重叠的小总结 + 所有大总结
       const nonSystemMessages = messages.filter((m) => m.sender !== "system" || m.isSystemAction);
       const dialogueRounds = buildDialogueRounds(nonSystemMessages);
-      const summarizedRounds = dialogueRounds.slice(0, summaryCheckpoint);
-      const summarizedMessageIds = new Set<string>();
+      const recentDialogueRoundLimit = 10;
+      const recentDialogueRounds = dialogueRounds.slice(-recentDialogueRoundLimit);
+      const recentDialogueRoundStartIndex = Math.max(0, dialogueRounds.length - recentDialogueRounds.length);
+      const recentDialogueMessages = recentDialogueRounds.flatMap((round) => [
+        round.userMessage,
+        ...round.replyMessages,
+      ]);
+      const availableSmallSummaryCount = Math.min(
+        todaySummaries.length,
+        Math.floor(summaryCheckpoint / SUMMARY_BATCH_SIZE),
+      );
+      const recentSmallSummaries = todaySummaries
+        .slice(0, availableSmallSummaryCount)
+        .filter((_, index) => {
+          const summaryRoundStart = index * SUMMARY_BATCH_SIZE;
+          const summaryRoundEnd = summaryRoundStart + SUMMARY_BATCH_SIZE;
+          const isFullyCoveredByRecentDialogue =
+            summaryRoundStart >= recentDialogueRoundStartIndex &&
+            summaryRoundEnd <= dialogueRounds.length;
 
-      for (const round of summarizedRounds)
-      {
-        summarizedMessageIds.add(round.userMessage.id);
-        for (const replyMessage of round.replyMessages)
-        {
-          summarizedMessageIds.add(replyMessage.id);
-        }
-      }
-
-      const unsummarizedMessages = nonSystemMessages.filter((message) => !summarizedMessageIds.has(message.id));
-      const recentSmallSummaries = todaySummaries.slice(-50);
+          return !isFullyCoveredByRecentDialogue;
+        })
+        .slice(-50);
       const history: { role: string; content: string }[] = [];
 
       if (bigSummaries.length > 0)
@@ -504,7 +513,7 @@ export const useDialogue = ({
       }
 
       history.push(
-        ...unsummarizedMessages.map((m) => ({
+        ...recentDialogueMessages.map((m) => ({
           role: m.sender === "character" ? "model" : "user",
           content: m.text,
         }))

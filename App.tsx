@@ -1044,6 +1044,19 @@ const AppContent: React.FC = () => {
     const nextSummaryCheckpoint = lastSummaryMessageCount.current + SUMMARY_BATCH_SIZE;
     const summaryBodyStatus = bodyStatus;
     const summaryGameTime = gameTime;
+    const latestDialogueMessage = [...messages]
+      .reverse()
+      .find(message => message.sender === 'user' || message.sender === 'character' || message.isSystemAction === true);
+
+    if (isLoading)
+    {
+      return;
+    }
+
+    if (!latestDialogueMessage || latestDialogueMessage.sender !== 'character')
+    {
+      return;
+    }
 
     if (dialogueRoundCount < nextSummaryCheckpoint)
     {
@@ -1253,7 +1266,7 @@ const AppContent: React.FC = () => {
         summaryGenerationTargetRef.current = null;
       }
     };
-  }, [backgroundAIConfig, messages, settings.contentAI, settings.mainAI, settings.useIndependentContentAI]);
+  }, [backgroundAIConfig, bodyStatus, gameTime, isLoading, messages, settings.contentAI, settings.mainAI, settings.useIndependentContentAI]);
 
   useEffect(() => {
     return () => {
