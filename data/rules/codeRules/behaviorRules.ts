@@ -215,7 +215,7 @@ function getYellowHairInviteRule(favorability: number, degradation: number): str
 ## 【当前黄毛邀约保护规则】
 
 - 当前好感度：${favorability}，当前堕落度：${degradation}
-- 温婉会强烈倾向于拒绝黄毛邀约。
+- 在邀约阶段，温婉必须拒绝黄毛邀约。
 - 只有当堕落度已经高于好感度时，才可能不拒绝。
 `.trim();
   }
@@ -225,7 +225,7 @@ function getYellowHairInviteRule(favorability: number, degradation: number): str
 ## 【当前黄毛邀约保护规则】
 
 - 当前好感度：${favorability}，当前堕落度：${degradation}
-- 温婉大概率拒绝黄毛邀约。
+- 在邀约阶段，温婉必须拒绝黄毛邀约，不能写成“鬼使神差答应了”。
 - 只有在堕落度明显压过好感度时，她才更可能动摇。
 `.trim();
   }

@@ -143,13 +143,9 @@ export function willWenwanAccept(favorability: number, degradation: number, yell
       return degradation > favorability;
     } else if (favorability >= 70)
     {
-      // 好感70-89：大概率拒绝（除非堕落高于好感）
-      // 80%概率拒绝，除非堕落高于好感
-      if (degradation > favorability)
-      {
-        return true;
-      }
-      return Math.random() < 0.2; // 20%概率接受
+      // 好感70-89：直接拒绝（除非堕落高于好感）
+      // 这里不再保留随机接受概率，否则会出现“明明高好感却鬼使神差答应”的违和情况
+      return degradation > favorability;
     } else if (favorability >= 50)
     {
       // 好感50-69：中概率拒绝
@@ -297,6 +293,5 @@ export function decideTodayYellowHair(bodyStatus: BodyStatus, gameTime: GameTime
 }
 
 // 已移除弧光D结局判定函数（shouldGenerateArcLightDEnding）
-
 
 

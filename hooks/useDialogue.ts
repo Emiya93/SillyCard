@@ -729,10 +729,10 @@ export const useDialogue = ({
           acceptanceInfo = `温婉堕落度${bodyStatus.degradation} < ${acceptanceThreshold}，会拒绝${todayYellowHair.name}的要求。${acceptanceDescription}`;
         } else if (isInviteStage)
         {
-          acceptanceInfo = `虽然这是试探性邀约，但当前好感度${bodyStatus.favorability}仍让温婉倾向拒绝${todayYellowHair.name}。只有好感明显下降，或堕落度反超好感时，她才更可能接受。`;
+          acceptanceInfo = `这是试探性邀约，但当前好感度${bodyStatus.favorability}明显高于堕落度${bodyStatus.degradation}，温婉这次必须拒绝${todayYellowHair.name}，不能写成接受邀约、外出赴约或因此增长堕落度。只有好感明显下降，或堕落度反超好感时，她才更可能接受。`;
         } else
         {
-          acceptanceInfo = `虽然堕落度已经达到阶段门槛，但当前好感度${bodyStatus.favorability}仍让温婉拒绝${todayYellowHair.name}这次要求。`;
+          acceptanceInfo = `虽然堕落度已经达到阶段门槛，但当前好感度${bodyStatus.favorability}仍让温婉拒绝${todayYellowHair.name}这次要求，不能写成她接受或让堕落度增长。`;
         }
 
         enhancedPromptText = `(System: 今天随机判定由${todayYellowHair.name}（${todayYellowHair.type === 'rich' ? '富二代差生' : 'cos社社长'}，高三生）在学校推进事件。若当前剧情已经明确点名黄耄或猪楠，则必须由被点名的那个黄毛出场。当前堕落度：${bodyStatus.degradation}，黄毛行为阶段值：${yellowHairBehaviorStage}。${behaviorDescription}${acceptanceInfo})\n\n${promptText}`;
