@@ -1,6 +1,12 @@
 import { Download, FileText, Home, Loader2, Monitor, RotateCcw, Save, Smartphone, X } from 'lucide-react';
 import React, { useState } from 'react';
-import { DisplayMode, useSettings } from '../contexts/SettingsContext';
+import {
+    clampSentHistoryLimit,
+    DisplayMode,
+    MAX_SENT_HISTORY_LIMIT,
+    MIN_SENT_HISTORY_LIMIT,
+    useSettings
+} from '../contexts/SettingsContext';
 import { getModels, ModelInfo } from '../services/aiService';
 import { clearDebugLogs, downloadDebugLogs, getDebugLogCount } from '../services/debugLogService';
 import { isMobileDevice } from '../utils/deviceUtils';
@@ -20,6 +26,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
         updateUseSillyTavernGenerate,
         updateDebugLoggingEnabled,
         updateDisplayMode,
+        updateSentHistoryLimit,
         resetSettings
     } = useSettings();
 
@@ -33,6 +40,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
     const [useSillyTavernGenerate, setUseSillyTavernGenerate] = useState(settings.useSillyTavernGenerate);
     const [debugLoggingEnabled, setDebugLoggingEnabled] = useState(settings.debugLoggingEnabled);
     const [displayMode, setDisplayMode] = useState<DisplayMode>(settings.displayMode);
+    const [sentHistoryLimit, setSentHistoryLimit] = useState(settings.sentHistoryLimit);
     const [debugLogCount, setDebugLogCount] = useState(getDebugLogCount());
 
     // 当settings变化时，同步到本地状态
@@ -43,10 +51,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
         setUseSillyTavernGenerate(settings.useSillyTavernGenerate);
         setDebugLoggingEnabled(settings.debugLoggingEnabled);
         setDisplayMode(settings.displayMode);
+        setSentHistoryLimit(settings.sentHistoryLimit);
         setDebugLogCount(getDebugLogCount());
     }, [settings.mainAI.apiBase, settings.mainAI.apiKey, settings.mainAI.model,
     settings.contentAI.apiBase, settings.contentAI.apiKey, settings.contentAI.model,
-    settings.useIndependentContentAI, settings.useSillyTavernGenerate, settings.debugLoggingEnabled, settings.displayMode]);
+    settings.useIndependentContentAI, settings.useSillyTavernGenerate, settings.debugLoggingEnabled, settings.displayMode, settings.sentHistoryLimit]);
 
     // 模型列表相关状态
     const [mainModels, setMainModels] = useState<ModelInfo[]>([]);
@@ -148,6 +157,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
         updateUseSillyTavernGenerate(useSillyTavernGenerate);
         updateDebugLoggingEnabled(debugLoggingEnabled);
         updateDisplayMode(displayMode);
+        updateSentHistoryLimit(sentHistoryLimit);
 
         // 强制保存到localStorage
         try
@@ -159,7 +169,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                 useIndependentContentAI: useIndependentContentAI,
                 useSillyTavernGenerate: useSillyTavernGenerate,
                 debugLoggingEnabled: debugLoggingEnabled,
-                displayMode: displayMode
+                displayMode: displayMode,
+                sentHistoryLimit: clampSentHistoryLimit(sentHistoryLimit)
             };
             localStorage.setItem('game_settings', JSON.stringify(currentSettings));
             console.log('设置已保存到localStorage:', currentSettings);
@@ -182,6 +193,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
             setUseIndependentContentAI(settings.useIndependentContentAI);
             setUseSillyTavernGenerate(settings.useSillyTavernGenerate);
             setDebugLoggingEnabled(settings.debugLoggingEnabled);
+            setDisplayMode(settings.displayMode);
+            setSentHistoryLimit(settings.sentHistoryLimit);
         }
     };
 
@@ -262,6 +275,46 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, onBackToM
                     {/* AI服务配置标签页 */}
                     {activeTab === 'ai' && (
                         <>
+                            <div className="bg-gradient-to-br from-slate-50 to-blue-50 rounded-2xl p-6 border border-slate-200">
+                                <h3 className="text-xl font-bold text-slate-900 mb-2 flex items-center gap-2">
+                                    <span className="w-2 h-2 bg-slate-500 rounded-full"></span>
+                                    对话上下文
+                                </h3>
+                                <p className="text-sm text-slate-700 mb-6">
+                                    控制每次发送给模型的最近完整对话轮数。数值越大，上下文越完整，但请求也会更长。
+                                </p>
+
+                                <div className="bg-white/80 rounded-2xl border border-slate-200 p-4">
+                                    <div className="flex items-center justify-between gap-4 mb-3">
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-800">
+                                                发送历史记录条数
+                                            </label>
+                                            <p className="text-xs text-gray-600 mt-1">
+                                                默认 10 条，可调范围 {MIN_SENT_HISTORY_LIMIT}-{MAX_SENT_HISTORY_LIMIT} 条
+                                            </p>
+                                        </div>
+                                        <div className="px-3 py-1.5 rounded-full bg-blue-100 text-blue-700 font-bold text-sm min-w-[72px] text-center">
+                                            {sentHistoryLimit} 条
+                                        </div>
+                                    </div>
+
+                                    <input
+                                        type="range"
+                                        min={MIN_SENT_HISTORY_LIMIT}
+                                        max={MAX_SENT_HISTORY_LIMIT}
+                                        step={1}
+                                        value={sentHistoryLimit}
+                                        onChange={(e) => setSentHistoryLimit(clampSentHistoryLimit(Number(e.target.value)))}
+                                        className="w-full accent-blue-600"
+                                    />
+
+                                    <div className="mt-2 flex justify-between text-xs text-gray-500">
+                                        <span>{MIN_SENT_HISTORY_LIMIT} 条</span>
+                                        <span>{MAX_SENT_HISTORY_LIMIT} 条</span>
+                                    </div>
+                                </div>
+                            </div>
                             {/* 主AI配置 */}
                             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-100">
                                 <h3 className="text-xl font-bold text-blue-900 mb-2 flex items-center gap-2">

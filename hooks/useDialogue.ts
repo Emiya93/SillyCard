@@ -1,9 +1,9 @@
 import type React from "react";
 import { useRef, useState } from "react";
-import { useSettings } from "../contexts/SettingsContext";
+import { clampSentHistoryLimit, useSettings } from "../contexts/SettingsContext";
 import { getSecondaryAIConfig, hasValidAIConfig } from "../services/aiConfigUtils";
 import { buildDialogueRounds, SUMMARY_BATCH_SIZE } from "../services/dialogueSummaryUtils";
-import { calculateYellowHairBehaviorStage, decideTodayYellowHair, generateCompanionYellowHair, generateYellowHair, shouldTriggerSecondYellowHair, shouldTriggerYellowHair, shouldYellowHairAppearToday, willWenwanAccept } from "../services/arcLightService";
+import { calculateYellowHairBehaviorStage, decideTodayYellowHair, generateCompanionYellowHair, generateYellowHair, isYellowHairInviteStage, shouldTriggerSecondYellowHair, shouldTriggerYellowHair, shouldYellowHairAppearToday, willWenwanAccept } from "../services/arcLightService";
 import { generateCharacterResponse } from "../services/characterService";
 import { appendDebugLog } from "../services/debugLogService";
 import { generateTweetForPhoneApp } from "../services/phoneContentService";
@@ -466,7 +466,7 @@ export const useDialogue = ({
       // 构建对话历史：最近10轮完整对话 + 不与最近10轮完全重叠的小总结 + 所有大总结
       const nonSystemMessages = messages.filter((m) => m.sender !== "system" || m.isSystemAction);
       const dialogueRounds = buildDialogueRounds(nonSystemMessages);
-      const recentDialogueRoundLimit = 10;
+      const recentDialogueRoundLimit = clampSentHistoryLimit(settings.sentHistoryLimit);
       const recentDialogueRounds = dialogueRounds.slice(-recentDialogueRoundLimit);
       const recentDialogueRoundStartIndex = Math.max(0, dialogueRounds.length - recentDialogueRounds.length);
       const recentDialogueMessages = recentDialogueRounds.flatMap((round) => [
@@ -680,8 +680,12 @@ export const useDialogue = ({
         let behaviorDescription = '';
         let acceptanceThreshold = 0;
         let acceptanceDescription = '';
+        const isInviteStage = isYellowHairInviteStage(
+          previewBodyStatus.degradation,
+          yellowHairBehaviorStage
+        );
 
-        if (yellowHairBehaviorStage <= 20)
+        if (isInviteStage)
         {
           behaviorDescription = `${todayYellowHair.name}可能会邀请温婉约会、看电影、拥抱。`;
           acceptanceThreshold = 0;
@@ -710,11 +714,11 @@ export const useDialogue = ({
 
         // 判断温婉是否会接受
         const willAccept = willWenwanAccept(
-          bodyStatus.favorability,
-          bodyStatus.degradation,
+          previewBodyStatus.favorability,
+          previewBodyStatus.degradation,
           yellowHairBehaviorStage
         );
-        const thresholdSatisfied = bodyStatus.degradation >= acceptanceThreshold;
+        const thresholdSatisfied = previewBodyStatus.degradation >= acceptanceThreshold;
 
         let acceptanceInfo = '';
         if (willAccept)
@@ -723,7 +727,7 @@ export const useDialogue = ({
         } else if (!thresholdSatisfied)
         {
           acceptanceInfo = `温婉堕落度${bodyStatus.degradation} < ${acceptanceThreshold}，会拒绝${todayYellowHair.name}的要求。${acceptanceDescription}`;
-        } else if (yellowHairBehaviorStage <= 20)
+        } else if (isInviteStage)
         {
           acceptanceInfo = `虽然这是试探性邀约，但当前好感度${bodyStatus.favorability}仍让温婉倾向拒绝${todayYellowHair.name}。只有好感明显下降，或堕落度反超好感时，她才更可能接受。`;
         } else

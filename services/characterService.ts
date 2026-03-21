@@ -20,6 +20,7 @@ import {
 import { appendDebugLog } from "./debugLogService";
 import { generateTextViaST, toSTChatMessage, type STGenerateViaChatHistoryInput } from "./stGenerateService";
 import type { STAPIGenerateInput } from "../types/stApi";
+import { buildBehaviorRules } from "../data/rules/codeRules/behaviorRules";
 import {
   DAILY_DEGRADATION_GAIN_LIMIT,
   DAILY_FAVORABILITY_GAIN_LIMIT,
@@ -1830,12 +1831,21 @@ ${memoryData.calendarEvents.length > 0
   };
 
   const hasInlineMemoryData = (includeMemoryData: boolean) => includeMemoryData && !!memoryData;
+  const relationshipStateBlock = `
+Current Favorability (to brother / 当前对哥哥好感度): ${currentStatus.favorability}
+Current Degradation (to yellow hair / 当前对黄毛堕落度): ${currentStatus.degradation}
+`.trim();
+  const currentBehaviorRulesBlock = buildBehaviorRules(
+    currentStatus.favorability,
+    currentStatus.degradation
+  );
 
   const buildContextPrompt = (includeMemoryData: boolean): string => isRemoteWeChat
     ? `
 [Current Game State]
 User Location: ${userLocation}
 Wenwan Location: ${currentStatus.location}
+${relationshipStateBlock}
 **IMPORTANT: This is a REMOTE WeChat message. The user cannot see Wenwan's real-time reactions, body language, or physical state.**
 
 [User Input]
@@ -1884,6 +1894,7 @@ ${promptText}
 User Location: ${userLocation}
 Wenwan Location: ${currentStatus.location}${currentStatus.exactLocation ? ` (精确位置: ${currentStatus.exactLocation})` : ''}${currentStatus.isAccessible === false ? ' (不可访问，如游艇已出海)' : ''}
 Wenwan Status: ${JSON.stringify(currentStatus, null, 2)}
+${relationshipStateBlock}
 Current Game Time: ${memoryData?.gameTime ? `${memoryData.gameTime.year}-${String(memoryData.gameTime.month).padStart(2, '0')}-${String(memoryData.gameTime.day).padStart(2, '0')} ${memoryData.gameTime.hour}:${String(memoryData.gameTime.minute).padStart(2, '0')} (${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][memoryData.gameTime.weekday]})` : '未知'}
 Today's Favorability Gain: ${currentStatus.todayFavorabilityGain || 0}/${DAILY_FAVORABILITY_GAIN_LIMIT} (每日上限${DAILY_FAVORABILITY_GAIN_LIMIT}点)
 Today's Degradation Gain: ${currentStatus.todayDegradationGain || 0}/${DAILY_DEGRADATION_GAIN_LIMIT} (每日上限${DAILY_DEGRADATION_GAIN_LIMIT}点)
@@ -1958,6 +1969,8 @@ Schema: {"reply":"...","status":{...}}
 - "status" must be a complete object containing all current fields, preserving unchanged values.
 - Keep location unchanged unless the plot explicitly changes it.
 - Keep body/clothing details unchanged unless the plot explicitly changes them.
+- The runtime state includes explicit current favorability / degradation values; treat them as mandatory.
+- The [Current Behavior Rules] block in runtime state overrides generic preset assumptions when they conflict.
 - Allowed emotion values: "neutral", "happy", "shy", "angry", "sad", "aroused", "surprised", "tired".
 - If the user asks to sleep, rest, or let time pass, describe the time skip in the reply.
 - Never include <thinking>, analysis, or any text outside the JSON object.`
@@ -1970,6 +1983,8 @@ Schema: {"reply":"...","status":{...}}
 - "status" must be a complete object containing all current fields, preserving unchanged values.
 - Update status.location / exactLocation / isAccessible when the scene clearly moves Wenwan.
 - Update status.overallClothing when clothing changes.
+- The runtime state includes explicit current favorability / degradation values; treat them as mandatory.
+- The [Current Behavior Rules] block in runtime state overrides generic preset assumptions when they conflict.
 - Allowed emotion values: "neutral", "happy", "shy", "angry", "sad", "aroused", "surprised", "tired".
 - If the user asks to sleep, rest, or let time pass, describe the time skip in the reply.
 - Never include <thinking>, analysis, or any text outside the JSON object.`;
@@ -1980,6 +1995,11 @@ Schema: {"reply":"...","status":{...}}
 User Location: ${userLocation}
 Wenwan Location: ${currentStatus.location}
 Current Status JSON: ${JSON.stringify(currentStatus, null, 2)}
+${relationshipStateBlock}
+
+[Current Behavior Rules]
+${currentBehaviorRulesBlock}
+
 Current Game Time: ${memoryData?.gameTime ? `${memoryData.gameTime.year}-${String(memoryData.gameTime.month).padStart(2, '0')}-${String(memoryData.gameTime.day).padStart(2, '0')} ${memoryData.gameTime.hour}:${String(memoryData.gameTime.minute).padStart(2, '0')} (${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][memoryData.gameTime.weekday]})` : '未知'}
 Today's Favorability Gain: ${currentStatus.todayFavorabilityGain || 0}/${DAILY_FAVORABILITY_GAIN_LIMIT}
 Today's Degradation Gain: ${currentStatus.todayDegradationGain || 0}/${DAILY_DEGRADATION_GAIN_LIMIT}
@@ -1991,6 +2011,11 @@ ${buildMemoryDataBlock(includeMemoryData).replace('[Memory Data - 用于判断�
 User Location: ${userLocation}
 Wenwan Location: ${currentStatus.location}${currentStatus.exactLocation ? ` (精确位置: ${currentStatus.exactLocation})` : ''}${currentStatus.isAccessible === false ? ' (不可访问，如游艇已出海)' : ''}
 Current Status JSON: ${JSON.stringify(currentStatus, null, 2)}
+${relationshipStateBlock}
+
+[Current Behavior Rules]
+${currentBehaviorRulesBlock}
+
 Current Game Time: ${memoryData?.gameTime ? `${memoryData.gameTime.year}-${String(memoryData.gameTime.month).padStart(2, '0')}-${String(memoryData.gameTime.day).padStart(2, '0')} ${memoryData.gameTime.hour}:${String(memoryData.gameTime.minute).padStart(2, '0')} (${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][memoryData.gameTime.weekday]})` : '未知'}
 Today's Favorability Gain: ${currentStatus.todayFavorabilityGain || 0}/${DAILY_FAVORABILITY_GAIN_LIMIT}
 Today's Degradation Gain: ${currentStatus.todayDegradationGain || 0}/${DAILY_DEGRADATION_GAIN_LIMIT}

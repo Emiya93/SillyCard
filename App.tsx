@@ -13,10 +13,10 @@ import { useLocation } from './hooks/useLocation';
 import { loadGame, saveGame, shouldAutoSave } from './services/saveService';
 import { clearSystemInstructionCache } from './services/characterService';
 import { getSecondaryAIConfig } from './services/aiConfigUtils';
-import { buildDialogueRounds, getSummaryCheckpoint, SUMMARY_BATCH_SIZE } from './services/dialogueSummaryUtils';
+import { buildDialogueRounds, getSummaryCheckpoint, SUMMARY_BATCH_SIZE, SUMMARY_MAX_BATCH_SIZE } from './services/dialogueSummaryUtils';
 import { setupSillyTavernEventListeners } from './services/sillytavernApiService';
 import { appendDebugLog } from './services/debugLogService';
-import { summarizeBigSummaryEntries, summarizeDialogueRounds } from './services/summaryService';
+import { SummaryRequestError, summarizeBigSummaryEntries, summarizeDialogueRounds } from './services/summaryService';
 import { AppID, BackpackItem, BodyStatus, CalendarEvent, GameTime, LocationID, Message, SummaryEntry, Tweet } from './types';
 import { syncDailyGainState } from './utils/bodyStatusUtils';
 
@@ -28,6 +28,19 @@ type SummaryToastState = {
   stage: 'small' | 'big';
   message: string;
 };
+
+const DEFAULT_SUMMARY_RETRY_AFTER_MS = 60_000;
+
+function formatRetryDelay(ms: number): string {
+  const totalSeconds = Math.max(1, Math.ceil(ms / 1000));
+  if (totalSeconds < 60)
+  {
+    return `${totalSeconds}秒`;
+  }
+
+  const minutes = Math.ceil(totalSeconds / 60);
+  return `${minutes}分钟`;
+}
 
 type DialogueActionSnapshot = {
   messages: Message[];
@@ -521,6 +534,7 @@ const AppContent: React.FC = () => {
   const lastSummaryMessageCount = useRef(0);
   const lastBigSummaryCheckpoint = useRef(0);
   const summaryGenerationTargetRef = useRef<number | null>(null);
+  const summaryRetryBlockedUntilRef = useRef<number>(0);
 
   // 用于跟踪上次自动存档的时间
   const lastAutoSaveTimeRef = useRef<GameTime | null>(null);
@@ -760,6 +774,7 @@ const AppContent: React.FC = () => {
       lastSummaryMessageCount.current = save.summaryCheckpoint ?? 0;
       lastBigSummaryCheckpoint.current = save.bigSummaryCheckpoint ?? 0;
       summaryGenerationTargetRef.current = null;
+      summaryRetryBlockedUntilRef.current = 0;
 
       // 恢复钱包数据
       if (save.walletBalance !== undefined)
@@ -1068,11 +1083,18 @@ const AppContent: React.FC = () => {
       return;
     }
 
+    const now = Date.now();
+    if (summaryRetryBlockedUntilRef.current > now)
+    {
+      return;
+    }
+
     const existingSummaryCount = todaySummariesRef.current.length;
     const summaryAIConfig = backgroundAIConfig;
     const summaryAIProvider = settings.useIndependentContentAI
       ? (summaryAIConfig === settings.contentAI ? 'contentAI' : 'mainAI fallback')
       : 'mainAI';
+    summaryRetryBlockedUntilRef.current = 0;
     summaryGenerationTargetRef.current = nextSummaryCheckpoint;
     showSummaryToast('loading', 'small', '正在生成小总结...');
     console.log('[App] Generating calendar summary with', summaryAIProvider);
@@ -1097,7 +1119,10 @@ const AppContent: React.FC = () => {
       {
         while (dialogueRounds.length >= processedCheckpoint + SUMMARY_BATCH_SIZE)
         {
-          const targetCheckpoint = processedCheckpoint + SUMMARY_BATCH_SIZE;
+          const targetCheckpoint = Math.min(
+            dialogueRounds.length,
+            processedCheckpoint + SUMMARY_MAX_BATCH_SIZE
+          );
           const summaryBatch = dialogueRounds.slice(processedCheckpoint, targetCheckpoint);
           const summary = await summarizeDialogueRounds(summaryBatch, summaryAIConfig, summaryBodyStatus);
 
@@ -1239,12 +1264,45 @@ const AppContent: React.FC = () => {
         }
       } catch (err)
       {
-        showSummaryToast('error', 'small', '小总结生成失败', true);
-        console.error(`[App][Summary] 本次摘要生成失败：当前已有${todaySummariesRef.current.length}条summary`, err);
+        if (
+          processedCheckpoint > lastSummaryMessageCount.current ||
+          processedBigSummaryCheckpoint > lastBigSummaryCheckpoint.current
+        )
+        {
+          replaceTodaySummaries(nextSummaries);
+          replaceBigSummaries(nextBigSummaries);
+          lastSummaryMessageCount.current = processedCheckpoint;
+          lastBigSummaryCheckpoint.current = processedBigSummaryCheckpoint;
+        }
+
+        if (err instanceof SummaryRequestError && err.status === 429)
+        {
+          const retryAfterMs = Math.max(1_000, err.retryAfterMs ?? DEFAULT_SUMMARY_RETRY_AFTER_MS);
+          summaryRetryBlockedUntilRef.current = Date.now() + retryAfterMs;
+          showSummaryToast('error', 'small', `摘要请求过快，${formatRetryDelay(retryAfterMs)}后重试`, true);
+          console.warn(
+            `[App][Summary] 摘要请求触发限流，暂停到 ${new Date(summaryRetryBlockedUntilRef.current).toLocaleTimeString()} 后重试`,
+            err
+          );
+          appendSummaryDebugLog('summary-rate-limited', {
+            dialogueRoundCount,
+            currentSummaryCount: nextSummaries.length,
+            currentCheckpoint: processedCheckpoint,
+            currentBigSummaryCheckpoint: processedBigSummaryCheckpoint,
+            retryAfterMs,
+            blockedUntil: summaryRetryBlockedUntilRef.current,
+            error: toLoggableError(err),
+          });
+        } else
+        {
+          showSummaryToast('error', 'small', '小总结生成失败', true);
+          console.error(`[App][Summary] 本次摘要生成失败：当前已有${todaySummariesRef.current.length}条summary`, err);
+        }
         appendSummaryDebugLog('summary-failed', {
           dialogueRoundCount,
-          currentSummaryCount: todaySummariesRef.current.length,
+          currentSummaryCount: nextSummaries.length,
           currentCheckpoint: processedCheckpoint,
+          currentBigSummaryCheckpoint: processedBigSummaryCheckpoint,
           error: toLoggableError(err),
         });
         console.error('生成总结失败:', err);

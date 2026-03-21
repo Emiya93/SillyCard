@@ -1,6 +1,7 @@
 import { Message } from '../types';
 
 export const SUMMARY_BATCH_SIZE = 5;
+export const SUMMARY_MAX_BATCH_SIZE = 20;
 
 export interface DialogueRound {
     userMessage: Message;

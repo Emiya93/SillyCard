@@ -9,6 +9,20 @@ export interface AIConfig {
 
 export type DisplayMode = 'desktop' | 'mobile';
 
+export const MIN_SENT_HISTORY_LIMIT = 10;
+export const MAX_SENT_HISTORY_LIMIT = 30;
+
+export function clampSentHistoryLimit(value: number): number {
+    if (!Number.isFinite(value)) {
+        return MIN_SENT_HISTORY_LIMIT;
+    }
+
+    return Math.min(
+        MAX_SENT_HISTORY_LIMIT,
+        Math.max(MIN_SENT_HISTORY_LIMIT, Math.round(value))
+    );
+}
+
 export interface Settings {
     mainAI: AIConfig;
     contentAI: AIConfig;
@@ -16,6 +30,7 @@ export interface Settings {
     useSillyTavernGenerate: boolean;
     debugLoggingEnabled: boolean;
     displayMode: DisplayMode;
+    sentHistoryLimit: number;
     presetContent: string;
     writingStyle: string;
     perspective: string;
@@ -65,6 +80,7 @@ const defaultSettings: Settings = {
     useSillyTavernGenerate: false,
     debugLoggingEnabled: false,
     displayMode: 'desktop',
+    sentHistoryLimit: MIN_SENT_HISTORY_LIMIT,
     presetContent: '',
     writingStyle: '',
     perspective: '',
@@ -81,6 +97,7 @@ interface SettingsContextType {
     updateUseSillyTavernGenerate: (enabled: boolean) => void;
     updateDebugLoggingEnabled: (enabled: boolean) => void;
     updateDisplayMode: (mode: DisplayMode) => void;
+    updateSentHistoryLimit: (limit: number) => void;
     updatePresetContent: (content: string) => void;
     updateWritingStyle: (style: string) => void;
     updatePerspective: (perspective: string) => void;
@@ -111,6 +128,7 @@ const loadSettings = (): Settings => {
                 useSillyTavernGenerate: parsed.useSillyTavernGenerate ?? defaultSettings.useSillyTavernGenerate,
                 debugLoggingEnabled: parsed.debugLoggingEnabled ?? defaultSettings.debugLoggingEnabled,
                 displayMode: parsed.displayMode || defaultSettings.displayMode,
+                sentHistoryLimit: clampSentHistoryLimit(parsed.sentHistoryLimit ?? defaultSettings.sentHistoryLimit),
                 presetContent: parsed.presetContent ?? defaultSettings.presetContent,
                 writingStyle: parsed.writingStyle ?? defaultSettings.writingStyle,
                 perspective: parsed.perspective ?? defaultSettings.perspective,
@@ -129,7 +147,10 @@ const loadSettings = (): Settings => {
 
 const saveSettings = (settings: Settings) => {
     try {
-        localStorage.setItem('game_settings', JSON.stringify(settings));
+        localStorage.setItem('game_settings', JSON.stringify({
+            ...settings,
+            sentHistoryLimit: clampSentHistoryLimit(settings.sentHistoryLimit),
+        }));
     } catch (error) {
         console.error('Failed to save settings:', error);
     }
@@ -192,6 +213,13 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
         }));
     };
 
+    const updateSentHistoryLimit = (limit: number) => {
+        setSettings(prev => ({
+            ...prev,
+            sentHistoryLimit: clampSentHistoryLimit(limit)
+        }));
+    };
+
     const updatePresetContent = (content: string) => {
         setSettings(prev => ({
             ...prev,
@@ -242,6 +270,7 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
                 updateUseSillyTavernGenerate,
                 updateDebugLoggingEnabled,
                 updateDisplayMode,
+                updateSentHistoryLimit,
                 updatePresetContent,
                 updateWritingStyle,
                 updatePerspective,

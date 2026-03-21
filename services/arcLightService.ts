@@ -109,6 +109,15 @@ export function calculateYellowHairBehaviorStage(degradation: number): number {
   return behaviorStage;
 }
 
+export function isYellowHairInviteStage(degradation: number, yellowHairBehaviorStage?: number): boolean {
+  if (degradation <= 25)
+  {
+    return true;
+  }
+
+  return typeof yellowHairBehaviorStage === 'number' && yellowHairBehaviorStage <= 20;
+}
+
 /**
  * 判断温婉是否会接受黄毛的要求（基于好感度和堕落度）
  * @param favorability 当前好感度（对哥哥）
@@ -125,7 +134,7 @@ export function willWenwanAccept(favorability: number, degradation: number, yell
   // 好感0-29：接受
 
   // 首先检查好感度对黄毛邀请的影响（仅针对约会邀请，行为阶段值<=20）
-  if (yellowHairBehaviorStage <= 20)
+  if (isYellowHairInviteStage(degradation, yellowHairBehaviorStage))
   {
     // 黄毛邀请约会、看电影、拥抱
     if (favorability >= 90)
@@ -288,7 +297,6 @@ export function decideTodayYellowHair(bodyStatus: BodyStatus, gameTime: GameTime
 }
 
 // 已移除弧光D结局判定函数（shouldGenerateArcLightDEnding）
-
 
 
 

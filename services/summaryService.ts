@@ -31,26 +31,38 @@ type SummaryAPIResponse = {
     };
 };
 
+export class SummaryRequestError extends Error {
+    status?: number;
+    retryAfterMs?: number;
+
+    constructor(message: string, options?: { status?: number; retryAfterMs?: number }) {
+        super(message);
+        this.name = 'SummaryRequestError';
+        this.status = options?.status;
+        this.retryAfterMs = options?.retryAfterMs;
+    }
+}
+
 const SMALL_SUMMARY_OPTIONS: SummaryGenerationOptions = {
     kind: 'small',
-    maxTokens: 800,
-    retryMaxTokens: 1400,
+    maxTokens: 8192,
+    retryMaxTokens: 16384,
     minLength: 30,
     maxLength: 200,
 };
 
 const MERGED_SUMMARY_OPTIONS: SummaryGenerationOptions = {
     kind: 'merged',
-    maxTokens: 800,
-    retryMaxTokens: 1400,
+    maxTokens: 8192,
+    retryMaxTokens: 16384,
     minLength: 20,
     maxLength: 200,
 };
 
 const BIG_SUMMARY_OPTIONS: SummaryGenerationOptions = {
     kind: 'big',
-    maxTokens: 1600,
-    retryMaxTokens: 2600,
+    maxTokens: 16384,
+    retryMaxTokens: 32768,
     minLength: 60,
     maxLength: 600,
 };
@@ -137,6 +149,24 @@ function clampSummaryLength(text: string, maxLength: number): string {
     return `${text.substring(0, Math.max(0, maxLength - 3)).trim()}...`;
 }
 
+function parseRetryAfterMs(value: string | null): number | undefined {
+    if (!value) {
+        return undefined;
+    }
+
+    const seconds = Number(value);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+        return Math.max(0, Math.round(seconds * 1000));
+    }
+
+    const retryAt = Date.parse(value);
+    if (Number.isNaN(retryAt)) {
+        return undefined;
+    }
+
+    return Math.max(0, retryAt - Date.now());
+}
+
 async function fetchSummaryCompletion(
     summaryPrompt: string,
     mainAIConfig: SummaryAIConfig,
@@ -167,7 +197,23 @@ async function fetchSummaryCompletion(
     });
 
     if (!response.ok) {
-        throw new Error(`API请求失败: ${response.status}`);
+        const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
+        let errorMessage = `API请求失败: ${response.status}`;
+
+        try {
+            const errorData = await response.json();
+            const apiMessage = errorData?.error?.message || errorData?.message;
+            if (typeof apiMessage === 'string' && apiMessage.trim()) {
+                errorMessage = `API请求失败: ${response.status} - ${apiMessage.trim()}`;
+            }
+        } catch {
+            // Ignore non-JSON error bodies.
+        }
+
+        throw new SummaryRequestError(errorMessage, {
+            status: response.status,
+            retryAfterMs,
+        });
     }
 
     const data: SummaryAPIResponse = await response.json();
@@ -283,6 +329,9 @@ ${roundTexts.join('\n\n')}
 
         return clampSummaryLength(summary, SMALL_SUMMARY_OPTIONS.maxLength);
     } catch (error: any) {
+        if (error instanceof SummaryRequestError) {
+            throw error;
+        }
         console.error('总结生成失败:', error);
         return null;
     }
@@ -335,6 +384,9 @@ ${cleanedEntries.map((entry, index) => `${index + 1}. ${entry.substring(0, 160)}
 
         return clampSummaryLength(summary, MERGED_SUMMARY_OPTIONS.maxLength);
     } catch (error: any) {
+        if (error instanceof SummaryRequestError) {
+            throw error;
+        }
         console.error('整合总结生成失败:', error);
         return null;
     }
@@ -387,6 +439,9 @@ ${cleanedEntries.map((entry, index) => `${index + 1}. ${entry.substring(0, 160)}
 
         return clampSummaryLength(summary, BIG_SUMMARY_OPTIONS.maxLength);
     } catch (error: any) {
+        if (error instanceof SummaryRequestError) {
+            throw error;
+        }
         console.error('大总结生成失败:', error);
         return null;
     }
