@@ -464,19 +464,25 @@ const AppContent: React.FC = () => {
           const shouldReplayAsSystemAction = actionMessage.isSystemAction === true
             || messageSnapshotsRef.current.has(actionMessage.id);
           setTimeout(() => {
-            handleAction(actionMessage.text, shouldReplayAsSystemAction);
+            handleAction(actionMessage.text, shouldReplayAsSystemAction, {
+              overrideGameTime: snapshot.gameTime,
+              historyMessages: snapshot.messages,
+            });
           }, 100);
           return;
         }
         if (actionMessage.isSystemAction)
         {
+          const nextMessages = messages.slice(0, actionMessageIndex);
           setMessages(prev => prev.slice(0, actionMessageIndex));
           setCalendarEvents(prev => prev.filter(e => {
             const eventTime = parseInt(e.id);
             return eventTime < messageTime.getTime();
           }));
           setTimeout(() => {
-            handleAction(actionMessage.text, true);
+            handleAction(actionMessage.text, true, {
+              historyMessages: nextMessages,
+            });
           }, 100);
           return;
         }
@@ -490,17 +496,23 @@ const AppContent: React.FC = () => {
         {
           restoreDialogueActionSnapshot(snapshot);
           setTimeout(() => {
-            handleAction(userMessage.text, true);
+            handleAction(userMessage.text, true, {
+              overrideGameTime: snapshot.gameTime,
+              historyMessages: snapshot.messages,
+            });
           }, 100);
         } else
         {
+          const nextMessages = messages.slice(0, messageIndex);
           setMessages(prev => prev.slice(0, messageIndex));
           setCalendarEvents(prev => prev.filter(e => {
             const eventTime = parseInt(e.id);
             return eventTime < messageTime.getTime();
           }));
           setTimeout(() => {
-            handleAction(userMessage.text, true);
+            handleAction(userMessage.text, true, {
+              historyMessages: nextMessages,
+            });
           }, 100);
         }
       }
@@ -835,7 +847,7 @@ const AppContent: React.FC = () => {
     setTweets,
     setCalendarEvents,
     avatarUrl: AVATAR_URL,
-    todaySummary, // 传递今日记忆
+    todaySummary, // 传递历史记忆
     todaySummaries,
     bigSummaries,
     summaryCheckpoint: lastSummaryMessageCount.current,

@@ -3,6 +3,12 @@
 
 import { BodyStatus, GameTime, YellowHairInfo } from '../types';
 
+const YELLOW_HAIR_SUPPRESSION_GAP = 60;
+
+export function isYellowHairSuppressed(bodyStatus: BodyStatus): boolean {
+  return bodyStatus.favorability - bodyStatus.degradation >= YELLOW_HAIR_SUPPRESSION_GAP;
+}
+
 // 已移除弧光判定函数（judgeArcLight, judgeArcLightAtoB, judgeArcLightC, shouldTriggerBodyModification）
 // 身体改造触发逻辑已整合到 behaviorRules.ts 中
 
@@ -13,6 +19,11 @@ import { BodyStatus, GameTime, YellowHairInfo } from '../types';
  * @returns 是否触发黄毛首次登场
  */
 export function shouldTriggerYellowHair(bodyStatus: BodyStatus, gameTime: GameTime): boolean {
+  if (isYellowHairSuppressed(bodyStatus))
+  {
+    return false;
+  }
+
   // 周三时，黄毛首次出现
   // 检查是否是周三（weekday === 3）
   if (gameTime.weekday !== 3)
@@ -38,6 +49,11 @@ function formatGameDate(gameTime: GameTime): string {
  * 第一个黄毛在周三首次出现后，从下一天开始可以补全另一名黄毛。
  */
 export function shouldTriggerSecondYellowHair(bodyStatus: BodyStatus, gameTime: GameTime): boolean {
+  if (isYellowHairSuppressed(bodyStatus))
+  {
+    return false;
+  }
+
   if (bodyStatus.yellowHair1 === null || bodyStatus.yellowHair2 !== null)
   {
     return false;
@@ -58,6 +74,11 @@ export function shouldTriggerSecondYellowHair(bodyStatus: BodyStatus, gameTime: 
  * @returns 今天是否允许黄毛事件出现
  */
 export function shouldYellowHairAppearToday(bodyStatus: BodyStatus, gameTime: GameTime): boolean {
+  if (isYellowHairSuppressed(bodyStatus))
+  {
+    return false;
+  }
+
   // 如果还没有黄毛，不能出现
   if (bodyStatus.yellowHair1 === null && bodyStatus.yellowHair2 === null)
   {
@@ -255,6 +276,11 @@ function getYellowHairByName(bodyStatus: BodyStatus, yellowHairName?: string): Y
  * @returns 今天出现的黄毛信息，或null
  */
 export function decideTodayYellowHair(bodyStatus: BodyStatus, gameTime: GameTime, forcedYellowHairName?: string): { name: string; type: 'rich' | 'fat' } | null {
+  if (isYellowHairSuppressed(bodyStatus))
+  {
+    return null;
+  }
+
   // 如果还没有黄毛，返回null
   if (bodyStatus.yellowHair1 === null && bodyStatus.yellowHair2 === null)
   {
@@ -293,5 +319,4 @@ export function decideTodayYellowHair(bodyStatus: BodyStatus, gameTime: GameTime
 }
 
 // 已移除弧光D结局判定函数（shouldGenerateArcLightDEnding）
-
 

@@ -144,7 +144,7 @@ interface UseDialogueProps {
   setTweets: React.Dispatch<React.SetStateAction<Tweet[]>>;
   setCalendarEvents: React.Dispatch<React.SetStateAction<CalendarEvent[]>>;
   avatarUrl: string;
-  todaySummary: string; // 今日记忆总结
+  todaySummary: string; // 历史记忆总结
   todaySummaries: SummaryEntry[]; // 小总结列表
   bigSummaries: string[]; // 大总结列表
   summaryCheckpoint: number; // 已完成小总结的轮次checkpoint
@@ -174,6 +174,7 @@ interface UseDialogueProps {
 
 type HandleActionOptions = {
   overrideGameTime?: GameTime;
+  historyMessages?: Message[];
 };
 
 export const useDialogue = ({
@@ -464,7 +465,8 @@ export const useDialogue = ({
       }
 
       // 构建对话历史：最近10轮完整对话 + 不与最近10轮完全重叠的小总结 + 所有大总结
-      const nonSystemMessages = messages.filter((m) => m.sender !== "system" || m.isSystemAction);
+      const sourceMessages = options?.historyMessages ?? messages;
+      const nonSystemMessages = sourceMessages.filter((m) => m.sender !== "system" || m.isSystemAction);
       const dialogueRounds = buildDialogueRounds(nonSystemMessages);
       const recentDialogueRoundLimit = clampSentHistoryLimit(settings.sentHistoryLimit);
       const recentDialogueRounds = dialogueRounds.slice(-recentDialogueRoundLimit);
@@ -1231,6 +1233,7 @@ export const useDialogue = ({
           if (lastActionRef.current)
           {
             // 移除错误消息和上一次的用户消息（如果存在）
+            let retryHistoryMessages: Message[] = [];
             setMessages((prev) => {
               const filtered = prev.filter((msg) => {
                 // 移除错误消息
@@ -1245,13 +1248,17 @@ export const useDialogue = ({
                 }
                 return true;
               });
+              retryHistoryMessages = filtered;
               return filtered;
             });
             // 重新执行最后一次操作
             handleAction(
               lastActionRef.current.actionText,
               lastActionRef.current.isSystemAction,
-              lastActionRef.current.options,
+              {
+                ...lastActionRef.current.options,
+                historyMessages: retryHistoryMessages,
+              },
             );
           }
         };
